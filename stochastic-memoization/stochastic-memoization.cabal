@@ -1,0 +1,81 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.3.
+--
+-- see: https://github.com/sol/hpack
+
+name:           stochastic-memoization
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/stochastic-memoization#readme>
+homepage:       https://github.com/githubuser/stochastic-memoization#readme
+bug-reports:    https://github.com/githubuser/stochastic-memoization/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2021 Author name here
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/stochastic-memoization
+
+library
+  exposed-modules:
+      Lib
+  other-modules:
+      Paths_stochastic_memoization
+  hs-source-dirs:
+      src
+  build-depends:
+      base >=4.7 && <5
+    , diagrams-core
+    , diagrams-lib
+    , diagrams-svg
+    , free
+    , monad-bayes
+    , mtl
+    , recursion-schemes
+  default-language: Haskell2010
+
+executable stochastic-memoization-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_stochastic_memoization
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , diagrams-core
+    , diagrams-lib
+    , diagrams-svg
+    , free
+    , monad-bayes
+    , mtl
+    , recursion-schemes
+    , stochastic-memoization
+  default-language: Haskell2010
+
+test-suite stochastic-memoization-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_stochastic_memoization
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , diagrams-core
+    , diagrams-lib
+    , diagrams-svg
+    , free
+    , monad-bayes
+    , mtl
+    , recursion-schemes
+    , stochastic-memoization
+  default-language: Haskell2010
