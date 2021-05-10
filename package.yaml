@@ -28,6 +28,7 @@ dependencies:
 - diagrams-core
 - diagrams-lib
 - diagrams-svg
+- containers
 
 library:
   source-dirs: src
