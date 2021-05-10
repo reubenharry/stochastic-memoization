@@ -1,3 +1,0 @@
-# Stochastic Memoization
-
-
