@@ -36,7 +36,8 @@ data NonRecursiveTree a x =
   | UnaryBranch x
   deriving (Functor, Foldable, Traversable)
 
-type Fragment = FT.Free (NonRecursiveTree String) CAT
+type TreeWithPauseValofType a = FT.Free (NonRecursiveTree String) a
+type Fragment = TreeWithPauseValofType CAT
 type FragmentDict = CAT -> [Fragment]
 
 
@@ -53,14 +54,61 @@ initialFragments S = [FT.free (FT.Free (Branch (S, Nothing)
 initialFragments _ = []
 
 
-makeFragment :: MonadSample m => CAT -> m Fragment
-makeFragment = FT.joinFreeT . Fold.ana go where
-  go x = Compose $ do
+makeFragment2 :: MonadSample m => FragmentDict -> CAT -> m Fragment
+makeFragment2 fragmentDict = FT.joinFreeT . Fold.futu go where
+  
+  go x = Compose $ do 
+    let existingFrags = lookupCat x fragmentDict
+    useFragment <- bernoulli (1 - (1 / (1 + fromIntegral (length existingFrags ))))
+    if useFragment then noncompositional existingFrags x else compositional x
+
+  noncompositional existingFrags x = do
+    let chooseFragmentFromDictionary = uniformD existingFrags
+    f1 <- chooseFragmentFromDictionary
+    f2 <- chooseFragmentFromDictionary
+    return (FT.Free $ Branch (x, Just f1) (loadFragmentHelper f1) (loadFragmentHelper f2) )
+
+  compositional x = do
     leaf <- bernoulli 0.8
-    if leaf then FT.Free . Leaf <$> uniformD words else do
-        c1 <- uniformD cats
-        c2 <- uniformD cats
-        return (FT.Free $ Branch (x, Nothing) c1 c2)
+    if leaf then FT.Free . Leaf <$> uniformD words else makeBranches x
+
+  makeBranch = do
+    pause <- bernoulli 0.9
+    cat <- uniformD cats
+    return $ if pause then F.Free $ Compose $ return $ FT.Pure cat else F.Pure cat
+
+  makeBranches x = do
+    b1 <- makeBranch
+    b2 <- makeBranch
+    return (FT.Free $ Branch (x, Nothing) (b1) (b2) )
+
+step :: MonadSample m => CAT -> FragmentDict -> m FragmentDict
+step cat fragDict = do 
+ frag <- makeFragment2 fragDict cat
+ let newFragDict y = if y == cat then fragDict y <> [frag] else fragDict y
+ return newFragDict
+
+
+makeFragment :: MonadSample m => FragmentDict -> CAT -> m Fragment
+makeFragment fragmentDict = FT.joinFreeT . Fold.ana go where
+  
+  go x = Compose $ do 
+    useFragment <- bernoulli 0.5
+    if useFragment then noncompositional x else compositional x
+
+  noncompositional x = undefined 
+  -- do
+  --   c <- uniformD $ lookupCat x fragmentDict
+  --   return (loadFragment c)
+
+  compositional x = do
+    leaf <- bernoulli 0.8
+    if leaf then FT.Free . Leaf <$> uniformD words else makeBranches x
+
+  makeBranches x = do
+    c1 <- uniformD cats
+    c2 <- uniformD cats
+    return (FT.Free $ Branch (x, Nothing) c1 c2)
 -- makeFragment = FT.joinFreeT . Fold.ana (\x -> Compose $ uniformD (ugo x <> [FT.Pure x])) where
 --   ugo S = [FT.Free $ Branch (S, Nothing) NP VP]
 --   ugo NP = [FT.Free $ Branch (NP, Nothing) DET N]
@@ -71,7 +119,8 @@ makeFragment = FT.joinFreeT . Fold.ana go where
 --   ugo V = [FT.Free $ Leaf "moves", FT.Free $ Leaf "turns"]
 --   ugo A = [FT.Free $ Leaf "green", FT.Free $ Leaf "blue"]
 
-
+lookupCat :: CAT -> FragmentDict -> [Fragment]
+lookupCat = flip ($)
 
 
 
@@ -79,19 +128,33 @@ fragment :: (MonadState FragmentDict m, MonadSample m) => CAT -> m (FT.Free (Non
 fragment = FT.joinFreeT . Fold.futu go where
 
   go x = Compose $ do
-    existingFrags <- gets ($ x)
+    fragmentDict <- get
+    let existingFrags = lookupCat x fragmentDict
     cache <- bernoulli (1.5 - (1 / (1 + fromIntegral (length existingFrags ))))
-    frag <- makeFragment x
     if cache 
     then do 
-      modify (\f y -> if y == x then f y <> [frag] else f y)
-      existing <- uniformD . ($ x) =<< get
+      existing <- uniformD . lookupCat x =<< get
       return $ loadFragment existing
-    else return $ loadFragment frag
+    else do
+      frag <- makeFragment fragmentDict x
+      modify (\f y -> if y == x then f y <> [frag] else f y)
+      return $ loadFragment frag
+
+iterateM step init int = if int == 0 then (step init) else do
+  result <- step init
+  iterateM step result (int -1)
 
 
 
+makeDiagram2 :: IO ()
+makeDiagram2 = do 
 
+  fragmentTrees <- fst <$> sampleIO (runWeighted $ ($ S) <$> iterateM (step S) (const []) 4)
+      -- return (x  =<< [S, NP, VP, DET, A, N, COP]))
+  let d = hsep 0.5 $ intersperse (vrule 50) $ take 5 (toDiagram <$> fragmentTrees)
+  let size = mkSizeSpec $ r2 (Just 500, Just 500)
+  -- print (Fold.cata freeTreeAlgebra <$> fragmentTrees)
+  renderSVG "img/fragment.svg" size d
 
 
 makeDiagram :: IO ()
@@ -108,14 +171,14 @@ makeDiagram = do
 
 viewMakeFrag :: IO ()
 viewMakeFrag = print =<< sampleIO (runWeighted $ do 
-  x <- makeFragment S
+  x <- makeFragment2 initialFragments S
   return (Fold.cata freeTreeAlgebra x))
 
 viewFrag :: IO () 
 viewFrag = do 
 
   (ls, ws) <- sampleIO $ runWeighted $ mh 100 $ do 
-    (xs, ys) <- runStateT (replicateM 10 $ fragment S) initialFragments
+    (xs, ys) <- runStateT (replicateM 10 $ fragment S) ( const [])
     let sents = Fold.cata freeTreeAlgebra <$> xs
     -- factor $ if (("the") `elem` sents) then 2.0 else 1.0
     -- condition (["the blue blue blue green circle is red", "the blue green circle is red"] == sents)
@@ -132,7 +195,7 @@ loadFragment (FT.FreeT (Identity (FT.Free (Branch c x y)))) = FT.Free $ Branch c
 loadFragment (FT.FreeT (Identity (FT.Free (UnaryBranch x )))) = FT.Free $ UnaryBranch (loadFragmentHelper x)
 loadFragment (FT.FreeT (Identity (FT.Free (Leaf x)))) = FT.Free $ Leaf x
 
-loadFragmentHelper :: MonadSample m => FT.Free (NonRecursiveTree a) b -> F.Free (Compose m (FT.FreeF (NonRecursiveTree a) a)) b
+-- loadFragmentHelper :: MonadSample m => FT.Free (NonRecursiveTree a) b -> F.Free (Compose m (FT.FreeF (NonRecursiveTree a) a)) b
 loadFragmentHelper (FT.FreeT (Identity (FT.Pure x))) = F.Pure x
 loadFragmentHelper (FT.FreeT (Identity (FT.Free (Branch c x y)))) = F.Free $ Compose $ return $ FT.Free $ Branch c (loadFragmentHelper x) (loadFragmentHelper y)
 loadFragmentHelper (FT.FreeT (Identity (FT.Free (UnaryBranch x)))) = F.Free $ Compose $ return $ FT.Free $ UnaryBranch (loadFragmentHelper x)
@@ -147,8 +210,8 @@ freeTreeAlgebra (Compose (Identity (FT.Pure a))) = show a
 
 
 
-toDiagram :: Show a => FT.Free (NonRecursiveTree String) a -> Diagram B
-toDiagram = (Fold.cata alg :: Show a => FT.Free (NonRecursiveTree String) a -> Diagram B) where
+toDiagram :: Show a => TreeWithPauseValofType a -> Diagram B
+toDiagram = Fold.cata alg where
   
 
   alg (Compose (Identity (FT.Pure x))) =
@@ -158,19 +221,20 @@ toDiagram = (Fold.cata alg :: Show a => FT.Free (NonRecursiveTree String) a -> D
 
 
 
-  alg (Compose (Identity (FT.Free (Branch (c,_) x y)))) = combineDiagrams c x y
+  alg (Compose (Identity (FT.Free (Branch c x y)))) = combineDiagrams c x y
   alg (Compose (Identity (FT.Free (UnaryBranch x)))) = x
   alg (Compose (Identity (FT.Free (Leaf x)))) = text x <> rect (fromIntegral $ length x) 2
 
   -- combine two diagrams together
-  combineDiagrams :: CAT -> (Diagram B) -> (Diagram B) -> (Diagram B)
-  combineDiagrams c d1 d2 =
+  combineDiagrams :: (CAT, Maybe Fragment) -> (Diagram B) -> (Diagram B) -> (Diagram B)
+  combineDiagrams (c, f) d1 d2 =
 
     -- let arrowStyle = (with & arrowHead .~ dart & headLength .~ verySmall & tailLength .~ small)
     
     vsep 2 [
-      text (show c) <> rect 2 2
-        # centerX,
+      text (show (c)) <> rect 2 2 # centerX <> (case f of 
+        Just f' -> translateX 5 (scale 0.5 (toDiagram f'))
+        Nothing -> mempty),
       hsep 0.5 [d1, d2] # centerX
       ]
     --   # connectOutside' arrowStyle (show (str1<>"|"<>str2)) (show str1)
