@@ -58,7 +58,7 @@ makeFragment fragmentDict = FT.joinFreeT . Fold.futu go where
   
   go x = Compose $ do 
     let existingFrags = lookupCat x fragmentDict
-    useFragment <- bernoulli (1 - (1 / (1 + fromIntegral (length existingFrags ))))
+    useFragment <- if null existingFrags then return False else bernoulli 0.1 --(1 - (1 / (1 + fromIntegral (length existingFrags ))))
     if useFragment then noncompositional existingFrags x else compositional x
 
   noncompositional existingFrags x = do
@@ -68,11 +68,11 @@ makeFragment fragmentDict = FT.joinFreeT . Fold.futu go where
     return (FT.Free $ Branch (x, (Just f1, Just f2)) (loadFragment f1) (loadFragment f2) )
 
   compositional x = do
-    leaf <- bernoulli 0.8
+    leaf <- bernoulli 0.5
     if leaf then FT.Free . Leaf <$> uniformD words else makeBranches x
 
   makeBranch = do
-    pause <- bernoulli 0.9
+    pause <- bernoulli 0.5
     cat <- uniformD cats
     return $ if pause then F.Free $ Compose $ return $ FT.Pure cat else F.Pure cat
 
@@ -94,8 +94,9 @@ makeFragment fragmentDict = FT.joinFreeT . Fold.futu go where
 step :: MonadSample m => CAT -> FragmentDict -> m FragmentDict
 step cat fragDict = do 
  frag <- makeFragment fragDict cat
+ addNew <- bernoulli 0.5
  let newFragDict y = if y == cat then fragDict y <> [frag] else fragDict y
- return newFragDict
+ return (if addNew then newFragDict else fragDict)
 
 lookupCat :: CAT -> FragmentDict -> [Fragment]
 lookupCat = flip ($)
@@ -112,11 +113,17 @@ iterateMInt step init int = if int == 0 then (step init) else do
 makeDiagram :: IO ()
 makeDiagram = do 
 
-  fragmentTrees <- fst <$> sampleIO (runWeighted $ (=<< cats) <$> iterateMInt (step S) (const []) 6)
+  (mcmcSamplesOfFragmentTrees, weight) <- sampleIO (runWeighted $ mh 1000 $ do 
+    frags <- (=<< cats) <$> iterateMInt (step S) (const []) 10
+    let sents = Fold.cata freeTreeAlgebra <$> frags
+    condition ("the circle" `elem` sents)
+    return frags
+    )
       -- return (x  =<< [S, NP, VP, DET, A, N, COP]))
-  let d = hsep 0.5 $ intersperse (vrule 50) $ take 5 (toDiagram <$> fragmentTrees)
+  let d = hsep 0.5 $ intersperse (vrule 50) $ (toDiagram <$> last mcmcSamplesOfFragmentTrees)
   let size = mkSizeSpec $ r2 (Just 500, Just 500)
-  print (Fold.cata freeTreeAlgebra <$> fragmentTrees)
+  print (Fold.cata freeTreeAlgebra <$> last mcmcSamplesOfFragmentTrees)
+  print weight
   renderSVG "img/fragment.svg" size d
 
 
@@ -173,10 +180,10 @@ toDiagram = Fold.cata alg where
   combineDiagrams :: (CAT, (Maybe Fragment, Maybe Fragment)) -> (Diagram B) -> (Diagram B) -> (Diagram B)
   combineDiagrams (c, (f1,f2)) d1 d2 =
 
-    -- let arrowStyle = (with & arrowHead .~ dart & headLength .~ verySmall & tailLength .~ small)
+    let arrowStyle = (with & arrowHead .~ dart & headLength .~ verySmall & tailLength .~ small)
     
-    vsep 2 [
-      text (show (c)) <> rect 2 2 # centerX <> translate (r2 (1, -1)) (arrowV (r2 (1.5, -2))) <> translate (r2 (-1, -1)) (arrowV (r2 (-1.5, -2))),
+    in vsep 2 [
+      text (show (c)) <> rect 2 2 # centerX <> translate (r2 (1, -1)) (arrowV' arrowStyle (r2 (1.5, -2))) <> translate (r2 (-1, -1)) (arrowV' arrowStyle (r2 (-1.5, -2))),
       -- <> (case f of 
       --   Just f' -> translateX 5 ( (scale 0.5 (circle 5 <> toDiagram f')))
       --   Nothing -> mempty),
