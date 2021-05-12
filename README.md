@@ -15,6 +15,7 @@ Haskell's powerful tools for expressing rich but principled patterns of recursio
 Download the Haskell Stack tool. Do:
 
 stack build
+
 stack ghci
 
 This second command will open a repl, in which you can write "makeDiagram" to generate sentences and corresponding diagrams
@@ -42,7 +43,7 @@ type RecursiveTree a = NonRecursiveTree a (RecursiveTree a)
 Or more succintly:
 
 ```haskell
-type RecursiveTree a = Fix (RecursiveTree a)
+type RecursiveTree a = Fix (NonRecursiveTree a)
 ```
 
 Note the recursion. This type isn't actually going to feature in the code, because we're going to use the excellent *recursion-schemes* package, which will make use of the non-recursive type instead. As it nicely states in the recursion-scheme docs: "The core idea of this library is that instead of writing recursive functions on a recursive datatype, we prefer to write non-recursive functions on a related, non-recursive datatype we call the "base functor"."
