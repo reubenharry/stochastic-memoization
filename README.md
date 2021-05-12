@@ -1,9 +1,6 @@
-UNDER CONSTRUCTION (email if you're interested)
-
+UNDER CONSTRUCTION
 
 # Stochastic Memoization
-
-The functionality of this library is shown in the diagram below:
 
 TODO: diagram
 
@@ -20,11 +17,11 @@ Download the Haskell Stack tool. Do:
 stack build
 stack ghci
 
-This second command will open a repl, in which you can write "viewFrag" to generate sentences.
+This second command will open a repl, in which you can write "makeDiagram" to generate sentences and corresponding diagrams
 
 # Docs
 
-The core functionality of the library is in `fragment` which probabilistically generates trees while stochastically memoizing tree fragments. This is complicated, so I'll build up to it step by step. I'm assuming that the reader is familiar with Haskell at an intermediate level.
+The core functionality of the library is in `makeFragment` which probabilistically generates trees while stochastically caching tree fragments. This is complicated, so I'll build up to it step by step. (I'm assuming that the reader is familiar with Haskell at an intermediate level.)
 
 ## Step 1: The datatype
 
@@ -32,7 +29,6 @@ The core functionality of the library is in `fragment` which probabilistically g
 data NonRecursiveTree a x =
   Leaf a
   | Branch x x
-  | UnaryBranch x
 ```
 
 As the name suggests, this type is not recursive; it's just one tree layer. `a` is the type of a leaf, and `x` is the type of each branch.
@@ -84,11 +80,9 @@ What we have now is not very useful though: the tree that gets output is always 
 ```haskell
 type Fragment = Free (NonRecursiveTree String) CAT
 
-TODO: check 
-
 ```
 
-where `Free` is defined as:
+where `Free`, from the library Control.Monad.Trans.Free, is defined as:
 
 ```haskell
 data Free f a = Pure a | Free (f (Free f a))
@@ -98,15 +92,12 @@ Here are some examples of values of type `Fragment`:
 
 ```haskell
 examples :: [Fragment]
-examples = [
-  TODO CHECK
+examples = [FT.free $ FT.Pure S,
+            FT.free (FT.Free (Branch
+	            (FT.free $ FT.Pure NP) 
+	            (FT.free $ FT.Pure VP)))
+	       ]
 
-  Pure S,
-  Free (Leaf "some word"),
-  Free (Branch (Pure NP) (Free (Leaf "some word")))
-  ]
-
-TODO
 ```
 
 And here they are visualized:
