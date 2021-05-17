@@ -4,11 +4,36 @@ UNDER CONSTRUCTION
 
 TODO: diagram
 
-What you see here is a sequence of trees which have been probabilistically generated. In the process of generating them, a number of "fragments", or partially complete trees, have been stored and reused. These are shown in the red box at the bottom of the diagram
+	What you see here is a sequence of trees which have been probabilistically generated. In the process of generating them, a number of "fragments", or partially complete trees, have been stored and reused. These are shown in the red box at the bottom of the diagram
 TODO.
 
-Haskell's powerful tools for expressing rich but principled patterns of recursion, especially when this recursion interacts with side-effects (global state, randomness), are a perfect fit for this problem.
 
+
+In BOOK TODO
+
+	TODO
+	lays out a beautiful proposal for how language comes to  
+
+	a grammar is a process to generate sentences
+	More recently, 
+		Bayesian view, in which that process is probabilistic, and an agent performs *inference*, asking: given that I heard a sentence, what must the 
+		A second, related question, which is easy to ask in this Bayesian framework is: what must the rules of the grammar...
+
+Haskell is the ideal language for this problem. It is able to separate complex problems along the grain of their abstract elements (here, unfolding of recursive structures, and probabilistic programming), so that instead of writing brittle unreadable code where implementation details are intermingled with algorithmic ones, what you write is flexible and clear. 
+
+The price for this is not speed (Haskell is extremely fast) but the need to work with mathematical abstractions.
+
+There is a beautiful story for how recursive unfolding of a value (such as a tree) from a seed works in Haskell. 
+	LINK: bananas, lenses
+
+
+There is also a beautiful story about probability. 
+	link: monad bayes
+
+Putting these together, for the application of stochastically memoizing trees,
+
+
+ requires some thought (see the walkthrough below), but illuminates what is otherwise a terrifyingly complex operation.
 
 # To run
 
@@ -20,19 +45,21 @@ stack ghci
 
 This second command will open a repl, in which you can write "makeDiagram" to generate sentences and corresponding diagrams
 
-# Docs
+# Walkthrough
 
-The core functionality of the library is in `makeFragment` which probabilistically generates trees while stochastically caching tree fragments. This is complicated, so I'll build up to it step by step. (I'm assuming that the reader is familiar with Haskell at an intermediate level.)
+The core functionality of the library is in `TODO` which probabilistically generates trees while stochastically caching tree fragments. This is complicated, so I'll build up to it step by step. (I'm assuming that the reader is familiar with Haskell at an intermediate level.)
 
 ## Step 1: The datatype
 
 ```haskell
 data NonRecursiveTree a x =
   Leaf a
-  | Branch x x
+  | Branch NodeData x x
 ```
 
-As the name suggests, this type is not recursive; it's just one tree layer. `a` is the type of a leaf, and `x` is the type of each branch.
+where `NodeData` records some information at each node (e.g. the syntactic category).
+
+As the name suggests, the `NonRecursiveTree` type is not recursive; it's just one binary branching tree "layer". `a` is the type of a leaf, and `x` is the type of each branch.
 
 The type of a full tree is then:
 
@@ -46,11 +73,19 @@ Or more succintly:
 type RecursiveTree a = Fix (NonRecursiveTree a)
 ```
 
-Note the recursion. This type isn't actually going to feature in the code, because we're going to use the excellent *recursion-schemes* package, which will make use of the non-recursive type instead. As it nicely states in the recursion-scheme docs: "The core idea of this library is that instead of writing recursive functions on a recursive datatype, we prefer to write non-recursive functions on a related, non-recursive datatype we call the "base functor"."
+Note the recursion. This type isn't actually going to feature in the code, because all the functions we write will be on `NonRecursiveTree`. Why? The answer is nicely put in the docs of the library we use for our tree unfolding, *recursion-schemes*:
 
-In our case, the "base functor" is `NonRecursiveTree String`, and the recursive type is `RecursiveTree`.
+> "The core idea of this library is that instead of writing recursive functions on a recursive datatype, we prefer to write non-recursive functions on a related, non-recursive datatype we call the "base functor"."
 
-## Step 2: unfolding a tree
+In our case, the "base functor" is `NonRecursiveTree String`, and the recursive type is going to vary, depending on whether we want to produce a tree, a partially complete tree, a probability distribution over trees, and so on.
+
+## Step 2: Unfolding a tree
+
+We want to make a tree of type `RecursiveTree String`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
+
+```haskell
+data CAT = S' | NP' | VP' | A' | N' | DET' | COP' | V'
+```
 
 What's particularly nice about *recursion-schemes* is its generality. The function `unfold` has type:
 
@@ -60,16 +95,15 @@ unfold :: Corecursive t => (a -> Base t a) -> a -> t
 
 This expresses what it means to unfold not just a binary branching tree, but in fact any kind of (co)recursive structure. This will prove particularly useful. What will also prove useful is that in addition to `unfold`, a few other, richer patterns of unfolding are supplied, and as we'll see, these are precisely what we need.
 
-We want to make a tree of type `RecursiveTree String`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
+But for now, let's note that a special case of the beautiful general type of `unfold` is the following:
 
 ```haskell
-data CAT = S' | NP' | VP' | A' | N' | DET' | COP' | V'
+unfold :: (CAT -> NonRecursiveTree String CAT) -> CAT -> Fix (NonRecursiveTree String)
 ```
 
 Then we can make the tree as follows:
 
 ```haskell
-simpleTree = unfold induction TODO
 TODO
 ```
 
@@ -82,6 +116,7 @@ What we have now is not very useful though: the tree that gets output is always 
 type Fragment = Free (NonRecursiveTree String) CAT
 
 ```
+
 
 where `Free`, from the library Control.Monad.Trans.Free, is defined as:
 
@@ -105,13 +140,17 @@ And here they are visualized:
 
 TODO
 
+
 So a `Fragment` is a tree where, optionally, the descent to the leaves may stop at some node and go no further. The computation has been "paused" before getting all the way to all the leaves.
 
-Now, as mentioned, `unfold` in *recursion-schemes* is delightfully general, and so knows that `Free f a` is something which you can make with an `unfold`.
+Like `Fix (NonRecursiveTree String)`, `Free (NonRecursiveTree String) CAT` is a corecursive type, so `unfold` works on it.
+
+
+Now, as mentioned, `unfold` in *recursion-schemes* is delightfully general, and so knows that `Free f a` is something which you can make with an `unfold`. So again, we have a (now different) special case of the type of `unfold`:
 
 
 ```haskell
-TODO
+unfold :: (CAT -> NonRecursiveTree String CAT) -> CAT -> Free (NonRecursiveTree String) TODO CHECK
 ```
 
 ## Step 4: unfold a tree using fragments
@@ -208,5 +247,7 @@ We create visualizations using the excellent *diagrams* package (actually it's s
 
 The reason we use *monad-bayes* is that if you define something generically in terms of the MonadSample and MonadInfer classes, it provides a range of inference algorithms like MCMC, and methods for customizing your own inference.
 
-In general, we want to ask questions like: given the generative process described by `fragment`, and given a set of observed sentences, what must the set of fragments have been to have resulted in the generation of those sentences. 
+In general, we want to ask questions like: given the generative process described by `fragment`, and given a set of observed sentences, what must the set of fragments have been to have resulted in the generation of those sentences.
+
+This is an *extremely* challenging inference problem, and just using MCMC out of the box is beyond hopeless. But as I better understand inference in this domain, I hope to use the tools of monad-bayes to implement something tractable. 
 

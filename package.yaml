@@ -29,6 +29,7 @@ dependencies:
 - diagrams-lib
 - diagrams-svg
 - containers
+- data-fix
 
 library:
   source-dirs: src

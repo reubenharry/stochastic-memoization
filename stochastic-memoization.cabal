@@ -33,6 +33,7 @@ library
   build-depends:
       base >=4.7 && <5
     , containers
+    , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
@@ -52,6 +53,7 @@ executable stochastic-memoization-exe
   build-depends:
       base >=4.7 && <5
     , containers
+    , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
@@ -73,6 +75,7 @@ test-suite stochastic-memoization-test
   build-depends:
       base >=4.7 && <5
     , containers
+    , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
