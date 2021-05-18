@@ -19,21 +19,14 @@ In BOOK TODO
 		Bayesian view, in which that process is probabilistic, and an agent performs *inference*, asking: given that I heard a sentence, what must the 
 		A second, related question, which is easy to ask in this Bayesian framework is: what must the rules of the grammar...
 
-Haskell is the ideal language for this problem. It is able to separate complex problems along the grain of their abstract elements (here, unfolding of recursive structures, and probabilistic programming), so that instead of writing brittle unreadable code where implementation details are intermingled with algorithmic ones, what you write is flexible and clear. 
+Haskell is the ideal language for this problem. It is able to separate complex problems along the grain of their abstract elements (here, unfolding of recursive structures, and probabilistic programming), so that instead of writing brittle unreadable code where implementation details are intermingled with algorithmic ones, what you write is flexible and clear. The price for this is not speed (Haskell is extremely fast) but the need to work with mathematical abstractions.
 
-The price for this is not speed (Haskell is extremely fast) but the need to work with mathematical abstractions.
+In particular, the problem of stochastically generating (possibly partial) trees involves two things that Haskell can do very beautifully:
 
-There is a beautiful story for how recursive unfolding of a value (such as a tree) from a seed works in Haskell. 
-	LINK: bananas, lenses
+1. Folding and unfolding (co)recursive data: see https://maartenfokkinga.github.io/utwente/mmf91m.pdf
+2. Writing probabilistic programs: see http://denotational.co.uk/publications/scibior-kammar-ghahramani-funcitonal-programming-for-modular-bayesian-inference.pdf
 
-
-There is also a beautiful story about probability. 
-	link: monad bayes
-
-Putting these together, for the application of stochastically memoizing trees,
-
-
- requires some thought (see the walkthrough below), but illuminates what is otherwise a terrifyingly complex operation.
+The *recursion-schemes* library captures the essence of what it means to unfold a data structure, while the *monad-bayes* library captures the essence of what it means to write a probabilistic program, so the main contribution of this project is to put those two things together.
 
 # To run
 
@@ -47,19 +40,19 @@ This second command will open a repl, in which you can write "makeDiagram" to ge
 
 # Walkthrough
 
-The core functionality of the library is in `TODO` which probabilistically generates trees while stochastically caching tree fragments. This is complicated, so I'll build up to it step by step. (I'm assuming that the reader is familiar with Haskell at an intermediate level.)
+The core functionality of the library is in `fragmentGrammar` which probabilistically generates trees while stochastically caching tree fragments. This is complicated, so I'll build up to it step by step. (I'm assuming that the reader is familiar with Haskell at an intermediate level.)
 
 ## Step 1: The datatype
 
 ```haskell
 data NonRecursiveTree a x =
   Leaf a
-  | Branch NodeData x x
+  | Branch NodeData [x]
 ```
 
 where `NodeData` records some information at each node (e.g. the syntactic category).
 
-As the name suggests, the `NonRecursiveTree` type is not recursive; it's just one binary branching tree "layer". `a` is the type of a leaf, and `x` is the type of each branch.
+As the name suggests, the `NonRecursiveTree` type is not recursive; it's just one n-ary branching tree "layer". `a` is the type of a leaf, and `x` is the type of each branch.
 
 The type of a full tree is then:
 
@@ -77,11 +70,11 @@ Note the recursion. This type isn't actually going to feature in the code, becau
 
 > "The core idea of this library is that instead of writing recursive functions on a recursive datatype, we prefer to write non-recursive functions on a related, non-recursive datatype we call the "base functor"."
 
-In our case, the "base functor" is `NonRecursiveTree String`, and the recursive type is going to vary, depending on whether we want to produce a tree, a partially complete tree, a probability distribution over trees, and so on.
+In our case, the "base functor" is `NonRecursiveTree Word`, (where `Word` is currently just set to be a synonym for the type `String`) and the recursive type is going to vary, depending on whether we want to produce a tree, a partially complete tree, a probability distribution over trees, and so on.
 
 ## Step 2: Unfolding a tree
 
-We want to make a tree of type `RecursiveTree String`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
+The first thing we want to do is to make a tree of type `RecursiveTree Word`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
 
 ```haskell
 data CAT = S' | NP' | VP' | A' | N' | DET' | COP' | V'
@@ -93,19 +86,34 @@ What's particularly nice about *recursion-schemes* is its generality. The functi
 unfold :: Corecursive t => (a -> Base t a) -> a -> t
 ```
 
-This expresses what it means to unfold not just a binary branching tree, but in fact any kind of (co)recursive structure. This will prove particularly useful. What will also prove useful is that in addition to `unfold`, a few other, richer patterns of unfolding are supplied, and as we'll see, these are precisely what we need.
+This expresses what it means to unfold not just a binary branching tree, but in fact any kind of (co)recursive structure. This will prove particularly useful.
 
 But for now, let's note that a special case of the beautiful general type of `unfold` is the following:
 
 ```haskell
-unfold :: (CAT -> NonRecursiveTree String CAT) -> CAT -> Fix (NonRecursiveTree String)
+unfold :: (CAT -> NonRecursiveTree Word CAT) -> CAT -> RecursiveTree Word
 ```
 
 Then we can make the tree as follows:
 
 ```haskell
-TODO
+deterministicSimpleTree :: RecursiveTree Deterministic Word
+deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
+
+  S  -> Branch S [NP, VP]
+  NP ->  Branch S [DET, N]
+  DET -> Leaf "the"
+  N  -> Leaf "cat"
+  VP ->  Branch VP [V, NP]
+  V  -> Leaf "sees") 
+
+  S -- starting category
 ```
+
+This produces:
+
+![Deterministic Simple Tree](/img/deterministicSimpleTree.png)
+
 
 ## Step 3: tree fragments
 
@@ -113,7 +121,7 @@ What we have now is not very useful though: the tree that gets output is always 
 
 
 ```haskell
-type Fragment = Free (NonRecursiveTree String) CAT
+type Fragment = Free (NonRecursiveTree Word) CAT
 
 ```
 
@@ -143,14 +151,14 @@ TODO
 
 So a `Fragment` is a tree where, optionally, the descent to the leaves may stop at some node and go no further. The computation has been "paused" before getting all the way to all the leaves.
 
-Like `Fix (NonRecursiveTree String)`, `Free (NonRecursiveTree String) CAT` is a corecursive type, so `unfold` works on it.
+Like `Fix (NonRecursiveTree Word)`, `Free (NonRecursiveTree Word) CAT` is a corecursive type, so `unfold` works on it.
 
 
 Now, as mentioned, `unfold` in *recursion-schemes* is delightfully general, and so knows that `Free f a` is something which you can make with an `unfold`. So again, we have a (now different) special case of the type of `unfold`:
 
 
 ```haskell
-unfold :: (CAT -> NonRecursiveTree String CAT) -> CAT -> Free (NonRecursiveTree String) TODO CHECK
+unfold :: (CAT -> NonRecursiveTree Word CAT) -> CAT -> Free (NonRecursiveTree Word) TODO CHECK
 ```
 
 ## Step 4: unfold a tree using fragments
@@ -166,10 +174,10 @@ How to do this? It turns out that Data.Functor.Foldable has some other unfolding
 futu :: Corecursive t => (a -> Base t (Free (Base t) a)) -> a -> t
 ```
 
-Or specializing this to our use case, (t = RecursiveTree String):
+Or specializing this to our use case, (t = RecursiveTree Word):
 
 ```haskell
-futu :: (CAT -> NonRecursiveTree String Fragment) -> CAT -> RecursiveTree String
+futu :: (CAT -> NonRecursiveTree Word Fragment) -> CAT -> RecursiveTree Word
 ```
 
 This means, if you give me a function which takes a `CAT` and produces two branches containing fragments (or just a leaf), I will give you a tree. 
@@ -204,7 +212,7 @@ data FreeF f a b = Pure a | Free (f b)
 data FreeT f m a = FreeT {runFreeT :: m (FreeF f a (FreeT f m a))}
 ```
 
-`FreeT m (NonRecursiveTree String) CAT` is precisely a tree, or fragment of a tree, where each succesive layer is wrapped in a new layer of the monad `m`. A very handy function provided by the *free* package is `joinFreeT`:
+`FreeT m (NonRecursiveTree Word) CAT` is precisely a tree, or fragment of a tree, where each succesive layer is wrapped in a new layer of the monad `m`. A very handy function provided by the *free* package is `joinFreeT`:
 
 ```haskell
 joinFreeT :: (Monad m, Traversable f) => FreeT f m a -> m (Free f a)
@@ -213,7 +221,7 @@ joinFreeT :: (Monad m, Traversable f) => FreeT f m a -> m (Free f a)
 In our case, we specialize this to:
 
 ```haskell
-joinFreeT :: (MonadSample m) => FreeT (RecursiveTree String) m CAT -> m Fragment
+joinFreeT :: (MonadSample m) => FreeT (RecursiveTree Word) m CAT -> m Fragment
 ```
 
 
