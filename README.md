@@ -112,7 +112,7 @@ deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
 
 This produces:
 
-![Deterministic Simple Tree](/img/deterministicSimpleTree.png)
+![Deterministic Simple Tree](/img/deterministicSimpleTree.svg)
 
 
 ## Step 3: tree fragments
