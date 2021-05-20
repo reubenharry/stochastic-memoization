@@ -2,18 +2,20 @@ UNDER CONSTRUCTION
 
 # Stochastic Memoization
 
-![Fragments](/img/fragment.svg)
+![Grammar rules](/img/grammarFragments.svg)
 
-What you see here is a sequence of trees which have been probabilistically generated. In the process of generating them, a number of "fragments", or partially complete trees, have been stored and reused. 
+What you see here is a number of partially completed syntax trees, or *fragments*. Some of these correspond to familiar grammatical rules, like "S -> NP VP", while others are terminal rules, like "DET -> the". Finally, there are fragments which fall in neither category, like the tree labelled VP. 
 
-Haskell is the ideal language for this problem. It is able to separate complex problems along the grain of their abstract elements (here, unfolding of recursive structures, and probabilistic programming), so that instead of writing brittle unreadable code where implementation details are intermingled with algorithmic ones, what you write is flexible and clear. The price for this is not speed (Haskell is extremely fast) but the need to work with mathematical abstractions.
+[Productivity and Reuse in Language](https://mitpress.mit.edu/books/productivity-and-reuse-language) is a book and research program which presents a really beautiful proposal for how an agent comes to store grammatical units.
+
+Central to the story is a probabilistic generative model of syntax trees, which are created (roughly) as follows. Starting at a given node, you either choose to branch to a left and right node (where the process repeats), terminate with a leaf node, or insert a whole fragment into the tree from your cache of fragments.
+
+When it comes to implementing complex probabilistic recursion schemes elegantly and efficiently, Haskell is a very appealing choice. It is able to separate complex problems along the grain of their abstract elements (here, the unfolding of recursive structures, and probabilistic programming).
 
 In particular, the problem of stochastically generating (possibly partial) trees involves two things that Haskell can do very beautifully:
 
-1. Folding and unfolding (co)recursive data: see https://maartenfokkinga.github.io/utwente/mmf91m.pdf
-2. Writing probabilistic programs: see http://denotational.co.uk/publications/scibior-kammar-ghahramani-funcitonal-programming-for-modular-bayesian-inference.pdf
-
-The *recursion-schemes* library captures the essence of what it means to unfold a data structure, while the *monad-bayes* library captures the essence of what it means to write a probabilistic program, so the main contribution of this project is to put those two things together.
+1. [Folding and unfolding (co)recursive data](https://maartenfokkinga.github.io/utwente/mmf91m.pdf)
+2. Writing probabilistic programs](http://denotational.co.uk/publications/scibior-kammar-ghahramani-funcitonal-programming-for-modular-bayesian-inference.pdf)
 
 # To run
 
@@ -99,10 +101,9 @@ The *recursion-schemes* documentation has this to say:
 
 > "The core idea of this library is that instead of writing recursive functions on a recursive datatype, we prefer to write non-recursive functions on a related, non-recursive datatype we call the "base functor"."
 
-In our case, the "base functor" is `NonRecursiveTree Word`, (where `Word` is currently just set to be a synonym for the type `String`) and the recursive type is going to be either `Tree m Word` or `Fragment m Word`, for some monad `m`.
+In our case, the "base functor" is `NonRecursiveTree Word`, (where `Word` is currently just set to be a synonym for the type `String`) and the recursive type is going to be either `Tree m Word` or `Fragment m Word`, for some monad `m`. OK, strictly speaking, the base functor is a bit more complicated, but you get the idea.
 
-
-The first thing we want to do is to deterministically make a tree of type `RecursiveTree Word`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
+The first thing we want to do is to deterministically make a tree of type `Tree Deterministic Word`, by starting with a seed. Let's say that the seed is of type `CAT` (for "category"), defined as:
 
 ```haskell
 data CAT = S | NP | VP | A | N | DET | COP | V
@@ -125,7 +126,7 @@ unfold :: (CAT -> Fold.Base (Tree Deterministic Word) CAT) -> CAT -> Tree Determ
 Then we can make the tree as follows:
 
 ```haskell
-deterministicSimpleTree :: RecursiveTree Deterministic Word
+deterministicSimpleTree :: Tree Deterministic Word
 deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
 
   S  -> Branch S [NP, VP]
@@ -220,11 +221,75 @@ This produces:
 
 ![Deterministic Complex Tree](/img/deterministicComplexTree.svg)
 
-What's really cool about this is that typical CFG rules like 'S -> NP VP' can be regarded as fragments, as can rules like 'N -> "cat" '. So instead of having a separation between the grammar and a collection of fragments, we can simply express all the productive rules of our grammar as fragments.  
+What's really cool about this is that typical CFG rules like 'S -> NP VP' can be regarded as fragments, as can rules like 'N -> "cat" '. So instead of having a separation between the grammar and a collection of fragments, we can simply express all the productive rules of our grammar as fragments. 
+
+## Using a monad other than Identity
+
+Soon, we'll want to use a monad representing probability distributions, but as a more familiar example, we can use the list monad to generate a Context Free Grammar:
+
+```haskell
+fragmentCFG :: FragmentDict -> Tree [] Word
+fragmentCFG fragmentDict = Fold.futu (Compose . \case
+
+  S  -> return $ branch (S, False) [NP, VP]
+  NP ->  return $ branch (NP, False) [DET, N]
+  DET -> return $ leaf (DET, False) "the"
+  N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
+  A  ->  [leaf (A, False) "green", leaf (A, False) "furious"]
+  VP ->  (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
+  V  -> return $ leaf (V, False) "sees")
+  
+  S
+
+  where 
+
+  branch a bs = FT.Free $ Branch a (F.Pure <$> bs) 
+```
+
+fragmentCFG :: FragmentDict -> Tree [] Word
+fragmentCFG fragmentDict = Fold.futu (Compose . \case
+
+  S  -> return $ branch (S, False) [NP, VP]
+  NP ->  return $ branch (NP, False) [DET, N]
+  DET -> return $ leaf (DET, False) "the"
+  N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
+  A  ->  [leaf (A, False) "green", leaf (A, False) "furious"]
+  VP ->  (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
+  V  -> return $ leaf (V, False) "sees")
+  
+  S
+
+  where 
+
+  branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
+
+You may be wondering how to actually get trees from it, and the answer is by using the following:
+
+```haskell
+joinFreeT :: (Monad m, Traversable f) => FreeT f m a -> m (Free f a)
+```
+
+Then, we can do:
+
+```haskell
+main = print $ FT.joinFreeT $ fragmentCFG grammar
+```
+
+That's an infinite list of trees though, so we should do something about that. We can use the powerful `cutoff` function to throw out trees of excessive depth, as in:
+
+```haskell
+atDepth = 5
+main = print $ FT.joinFreeT $ FT.cutoff atDepth $ fragmentCFG grammar
+```
+
+With a bit more processing in that vein, we get:
+
+![](/img/fragmentCFG.svg)
+
 
 ## Incorporating Probability 
 
-We will use a library called monad-bayes. This defines a typeclass `MonadSample` of probability monads we can sample from. Here's an example:
+We will use a library called *monad-bayes*. This defines a typeclass `MonadSample` of probability monads we can sample from. Here's an example:
 
 ```haskell
 probabilityExample :: MonadSample m => m Double
@@ -259,11 +324,7 @@ probabilisticSimpleTree = Fold.unfold (Compose . \case
   S
 ```
 
-which is a simple PCFG. You may be wondering how to actually sample from it, and the answer is by using the following:
-
-```haskell
-joinFreeT :: (Monad m, Traversable f) => FreeT f m a -> m (Free f a)
-```
+which is a simple PCFG. 
 
 Then we can do:
 
@@ -307,17 +368,21 @@ fragmentGrammar fragmentDict = Fold.futu go S where
 
 Here's what this does. At each step of the unfolding, we do as follows: with some probability linked to the number of existing fragments, we decide whether to get a fragment from the cache. If we do get one from the cache, we will use it to continue the unfolding. If not, we will proceed compositionally.
 
+This whole process produces a new fragment, so we can repeat it many times, accumulating a larger and larger store of fragments. We could also have used the state monad transformer on top of the probability monad, to cache fragments during the unfolding; that works, but seems unnecessary.
+
 ## Visualization
 
 It is pleasing to note that while the creation of a tree involves an unfolding, the transformation of a tree into a visualization is the dual operation, of folding. Naturally, recursion-schemes provides, for every unfolding operation, its dual folding operation.
 
-We create visualizations using the excellent *diagrams* package (actually it's several linked packages). *diagrams* provides a DSL in Haskell for compositionally generating diagrams. 
+We create visualizations using the excellent *diagrams* package (actually it's several linked packages). *diagrams* provides a DSL in Haskell for compositionally generating diagrams, which is what I use for the images throughout.
+
+Folding is also how we take a syntax tree and produce a meaning. The dual of the `futu` recursion scheme is `histo`, and it makes sense to use this to interpret a syntax tree in an idiom aware way. Composing them gives `chrono`, which unfolds to produce a tree, and then folds it back down again. I might use that as a way of generating sentence meanings randomly. 
 
 ## Inference
 
 The reason we use *monad-bayes* is that if you define something generically in terms of the MonadSample and MonadInfer classes, it provides a range of inference algorithms like MCMC, and methods for customizing your own inference.
 
-In general, we want to ask questions like: given the generative process described by `fragment`, and given a set of observed sentences, what must the set of fragments have been to have resulted in the generation of those sentences.
+In general, we want to ask questions like: given the generative process described by `fragmentGammar`, and given a set of observed sentences, what must the set of fragments have been to have resulted in the generation of those sentences.
 
 This is an *extremely* challenging inference problem, and just using MCMC out of the box is beyond hopeless. But as I better understand inference in this domain, I hope to use the tools of *monad-bayes* to implement something tractable. 
 

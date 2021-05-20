@@ -6,7 +6,7 @@ import Prelude hiding (words, Word)
 
 import           Data.List (intersperse)
 import           Data.Set (Set)
-import           Data.Maybe (fromMaybe, isJust)
+import           Data.Maybe (catMaybes, fromMaybe, isJust)
 import qualified Data.Map as M
 import           Data.Functor.Compose
 import qualified Data.Functor.Foldable as Fold
@@ -16,6 +16,8 @@ import qualified Control.Monad.Free as F
 import qualified Control.Monad.Trans.Free as FT
 
 import           Diagrams.Prelude               hiding (E, (:<), (^.), normalize, set) 
+
+
 import           Diagrams.Backend.SVG.CmdLine    (B)
 import           Diagrams.Backend.SVG            (renderSVG)
 
@@ -29,7 +31,7 @@ import           Data.Fix
 import           Data.Void (Void)
 
 type Word = String
-data CAT = S | NP | VP | A | N | DET | COP | V deriving (Show, Eq, Ord)
+data CAT = S | NP | VP | A | N | DET | COP | V | RP | PREP deriving (Show, Eq, Ord)
 
 type IsIdiom = Bool
 type NodeData = (CAT, IsIdiom)
@@ -181,17 +183,35 @@ probabilisticComplexFragment fragmentDict = Fold.futu (Compose . go) S where
 
 
 
+fragmentCFG :: FragmentDict -> Tree [] Word
+fragmentCFG fragmentDict = Fold.futu (Compose . \case
+
+  S  -> return $ branch (S, False) [NP, VP]
+  NP ->  return $ branch (NP, False) [DET, N]
+  DET -> return $ leaf (DET, False) "the"
+  N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
+  A  ->  [leaf (A, False) "green", leaf (A, False) "furious"]
+  VP ->  (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
+  V  -> return $ leaf (V, False) "sees")
+  
+  S
+
+  where 
+
+  branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
 
 
-aPossibleGrammar :: FragmentDict
-aPossibleGrammar = \case
+
+grammar :: FragmentDict
+grammar = \case
   
   S -> [branch (S, True) [pauseAt NP, pauseAt VP] ]
-  NP -> [branch (S, True) [pauseAt DET, pauseAt N] ]
-  VP -> [branch (VP, True) [pauseAt V, branch (NP, True) [pauseAt DET, leaf (N, True) "dog"] ] ]
-  N -> [leaf (N, True) "dog", pauseAt N]
+  NP -> [branch (NP, True) [pauseAt DET, pauseAt N] ]
+  VP -> [branch (VP, True) [branch (VP, True) [leaf (V, True) "gives", pauseAt NP], branch (NP, True) [leaf (DET, True) "a", leaf (N, True) "break" ]]]
+  N -> [leaf (N, True) "dog", branch (N, True) [pauseAt A, pauseAt N]]
   V -> [leaf (V, True) "sees"]
-  DET -> [leaf (V, True) "the"]
+  DET -> [leaf (DET, True) "the"]
+  _ -> []
 
   where 
 
@@ -216,7 +236,7 @@ iterateMInt step init int = if int == 0 then step init else do
 
 
 saveDiagram :: String -> Diagram B -> IO ()
-saveDiagram path diagram = let size = mkSizeSpec $ r2 (Just 500, Just 500) in renderSVG path size diagram
+saveDiagram path diagram = let size = mkSizeSpec $ r2 (Just 1000, Just 1000) in renderSVG path size diagram
 
 
 
@@ -304,20 +324,16 @@ toDiagram = fst . Fold.cata alg where
     in (vsep 0.5 [
       text (show $ fst c) # fc textColor <> rect 2 2 # centerX # lw 0 # named newName,
 
-      -- triangle 2 # scaleY 2,
-       -- <> translate (r2 (1, -1)) (arrowV' arrowStyle (r2 (1.5, -2))) <> translate (r2 (-1, -1)) (arrowV' arrowStyle (r2 (-1.5, -2))),
-      -- <> (case f of 
-      --   Just f' -> translateX 5 ( (scale 0.5 (circle 5 <> toDiagram f')))
-      --   Nothing -> mempty),
       hsep 0.5 [d # named name | (d, name) <- ds]
          # centerX
       ]
-        # connectOutside' arrowStyle newName (snd $ ds !! 0)
+        # connectOutside' arrowStyle newName (snd $ ds !! 0) 
         # if length ds > 1 then (connectOutside' arrowStyle newName (snd $ ds !! 1)) else id
-        -- # connectOutside' arrowStyle "3" "2"
+        -- # lc textColor
       , newName )
     where
-      arrowStyle = (with & arrowHead .~ noHead & headLength .~ verySmall & tailLength .~ small)
+      arrowStyle = (with & arrowHead .~ dart & headLength .~ 3 
+        & tailLength .~ verySmall)
       colorIdiom f color d = if f then d # lc color else d
 
 
@@ -377,12 +393,31 @@ depth = 10
 makeTrees = do
   saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ FT.cutoff depth $ numberLeaves deterministicSimpleTree
   saveDiagram "img/deterministicSimpleFragment.svg" $ toDiagram $ numberLeaves $ deterministicSimpleFragment
-  saveDiagram "img/deterministicComplexTree.svg" $ toDiagram $ numberLeaves $ deterministicComplexTree aPossibleGrammar
-  saveDiagram "img/deterministicComplexFragment.svg" $ toDiagram $ numberLeaves $ deterministicComplexFragment aPossibleGrammar
+  saveDiagram "img/deterministicComplexTree.svg" $ toDiagram $ numberLeaves $ deterministicComplexTree grammar
+  saveDiagram "img/deterministicComplexFragment.svg" $ toDiagram $ numberLeaves $ deterministicComplexFragment grammar
   
-  saveDiagram "img/probabilisticSimpleTree.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT probabilisticSimpleTree)
-  saveDiagram "img/probabilisticSimpleFragment.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT probabilisticSimpleFragment)
-  -- saveDiagram "img/probabilisticComplexTree.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexTree aPossibleGrammar)
-  -- saveDiagram "img/probabilisticComplexFragment.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexFragment aPossibleGrammar)
 
-  saveDiagram "img/fragmentGrammar.svg" . toDiagram . numberLeaves =<< (sampleIO $ FT.joinFreeT $ fragmentGrammar aPossibleGrammar)
+  -- saveDiagram "img/probabilisticSimpleTree.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT probabilisticSimpleTree)
+  -- saveDiagram "img/probabilisticSimpleFragment.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT probabilisticSimpleFragment)
+  -- saveDiagram "img/probabilisticComplexTree.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexTree grammar)
+  -- saveDiagram "img/probabilisticComplexFragment.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexFragment grammar)
+
+  -- saveDiagram "img/fragmentGrammar.svg" . toDiagram . numberLeaves =<< (sampleIO $ FT.joinFreeT $ fragmentGrammar grammar)
+  let a = FT.joinFreeT $ FT.cutoff 5 $ fragmentCFG grammar :: [FT.Free (NonRecursiveTree Word) (Maybe Void)]
+  let b = catMaybes $ fmap (Fold.transverse may) a
+  saveDiagram "img/fragmentCFG.svg" $ hsep 2 $ take 2 $ fmap (toDiagram . numberLeaves) $ b
+
+  let ds x = (circle 9 # translateY (-5) <>) . toDiagram . numberLeaves <$> grammar x
+  saveDiagram "img/grammarFragments.svg" $ vsep 3 [if not (null (grammar cat)) then hsep 0.5 (text (show cat) # scale 5 <> strut 6 : ds cat) else mempty | cat <- cats]
+
+
+may :: Fold.Base (FT.Free (NonRecursiveTree Word) (Maybe Void)) (Maybe a)
+  -> Maybe (Fold.Base (FT.Free (NonRecursiveTree Word) Void) a) -- Fold.Base (FT.Free (NonRecursiveTree Word) b) (Maybe a) -> Maybe (Fold.Base (FT.Free (NonRecursiveTree Word) b) a)
+may (Compose (Identity (FT.Pure x))) = Compose . Identity . FT.Pure <$> x
+may y@(Compose (Identity (FT.Free (Leaf c x)))) = do
+    return (Compose $ Identity $ FT.Free (Leaf c x))
+-- may = undefined
+
+may y@(Compose (Identity (FT.Free (Branch c brs)))) = 
+    (Compose <$> Identity <$> FT.Free <$> Branch c <$> sequence brs)
+
