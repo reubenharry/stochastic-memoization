@@ -31,7 +31,7 @@ import           Data.Fix
 import           Data.Void (Void)
 
 type Word = String
-data CAT = S | NP | VP | A | N | DET | COP | V | RP | PREP deriving (Show, Eq, Ord)
+data CAT = S | NP | VP | A | N | DET | COP | V | PREP deriving (Show, Eq, Ord)
 
 type IsIdiom = Bool
 type NodeData = (CAT, IsIdiom)
@@ -236,7 +236,7 @@ iterateMInt step init int = if int == 0 then step init else do
 
 
 saveDiagram :: String -> Diagram B -> IO ()
-saveDiagram path diagram = let size = mkSizeSpec $ r2 (Just 1000, Just 1000) in renderSVG path size diagram
+saveDiagram path diagram = let size = mkSizeSpec $ r2 (Just 1000, Just 1000) in renderSVG path size (diagram # bg white)
 
 
 
@@ -260,10 +260,10 @@ freeTreeAlgebra (Compose (Identity (FT.Free (Leaf c a)))) = a
 freeTreeAlgebra (Compose (Identity (FT.Pure a))) = show a
 
 
+-- Surely a one-liner that I'm missing
 numberLeaves :: Show a => FT.Free (NonRecursiveTree Word) a -> FT.Free (NonRecursiveTree Word) a
---   -> FT.Free (NonRecursiveTree Word) a -> State Int (FT.Free (NonRecursiveTree Word) a)
 numberLeaves = fst . flip runState 0 . Fold.transverse go where
-  -- go = undefined
+
   go y@(Compose (Identity (FT.Free (Leaf c x)))) = do
     i <- get
     modify (+1)
@@ -273,33 +273,6 @@ numberLeaves = fst . flip runState 0 . Fold.transverse go where
     (Compose <$> Identity <$> FT.Free <$> Branch c <$> sequence brs) 
 
   go (Compose (Identity (FT.Pure x))) = return (Compose $ Identity $ FT.Pure x)
-    -- (Compose $ Identity $ FT.Free (Branch c brs))
-
--- numberLeaves :: Show a => FT.Free (NonRecursiveTree Word) a -> State Int (FT.Free (NonRecursiveTree Word) a)
--- numberLeaves = fmap fst . Fold.cata alg where 
-
---   alg :: Show a => Fold.Base (FT.Free (NonRecursiveTree Word) a) (State Int Int) -> State Int Int
-
---   -- alg (Compose (Identity (FT.Pure x))) = 
-
---   -- do
---   --   i <- get
---   --   modify (+1)
---   --   return (text (show (x,i)) # fc blue <> rect (maximum [fromIntegral (length (show x)), 3]) 2 # lw 0,
---   --     i)
---   alg = undefined
-  -- alg (Compose (Identity (FT.Free x@(Leaf _ _)))) = do 
-
-  --   i <- get
-  --   modify (+1)
-  --   return  undefined
-  --   return (vsep 0.5 [
-  --     text (show $ (fst c, i)) # fc (col c) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0,
-  --     text x # (if (snd c) then fc red else fc black) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0],
-  --     i
-  --     )
-
-  -- alg (Compose (Identity (FT.Free (Branch c brs)))) = fmap (,1) $ combineDiagrams (col c) c <$> (fmap fst <$> sequence brs)
 
 toDiagram :: Show a => FT.Free (NonRecursiveTree Word) a -> Diagram B
 toDiagram = fst . Fold.cata alg where
@@ -329,7 +302,6 @@ toDiagram = fst . Fold.cata alg where
       ]
         # connectOutside' arrowStyle newName (snd $ ds !! 0) 
         # if length ds > 1 then (connectOutside' arrowStyle newName (snd $ ds !! 1)) else id
-        -- # lc textColor
       , newName )
     where
       arrowStyle = (with & arrowHead .~ dart & headLength .~ 3 
@@ -402,7 +374,8 @@ makeTrees = do
   -- saveDiagram "img/probabilisticComplexTree.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexTree grammar)
   -- saveDiagram "img/probabilisticComplexFragment.svg" . toDiagram =<< (sampleIO $ FT.joinFreeT $ probabilisticComplexFragment grammar)
 
-  -- saveDiagram "img/fragmentGrammar.svg" . toDiagram . numberLeaves =<< (sampleIO $ FT.joinFreeT $ fragmentGrammar grammar)
+  saveDiagram "img/fragmentGrammar.svg" . toDiagram . numberLeaves =<< (sampleIO $ FT.joinFreeT $ fragmentGrammar grammar)
+  
   let a = FT.joinFreeT $ FT.cutoff 5 $ fragmentCFG grammar :: [FT.Free (NonRecursiveTree Word) (Maybe Void)]
   let b = catMaybes $ fmap (Fold.transverse may) a
   saveDiagram "img/fragmentCFG.svg" $ hsep 2 $ take 2 $ fmap (toDiagram . numberLeaves) $ b
@@ -410,14 +383,12 @@ makeTrees = do
   let ds x = (circle 9 # translateY (-5) <>) . toDiagram . numberLeaves <$> grammar x
   saveDiagram "img/grammarFragments.svg" $ vsep 3 [if not (null (grammar cat)) then hsep 0.5 (text (show cat) # scale 5 <> strut 6 : ds cat) else mempty | cat <- cats]
 
-
+-- This is surely a one-liner that I'm not seeing
 may :: Fold.Base (FT.Free (NonRecursiveTree Word) (Maybe Void)) (Maybe a)
-  -> Maybe (Fold.Base (FT.Free (NonRecursiveTree Word) Void) a) -- Fold.Base (FT.Free (NonRecursiveTree Word) b) (Maybe a) -> Maybe (Fold.Base (FT.Free (NonRecursiveTree Word) b) a)
+  -> Maybe (Fold.Base (FT.Free (NonRecursiveTree Word) Void) a) 
 may (Compose (Identity (FT.Pure x))) = Compose . Identity . FT.Pure <$> x
 may y@(Compose (Identity (FT.Free (Leaf c x)))) = do
     return (Compose $ Identity $ FT.Free (Leaf c x))
--- may = undefined
-
 may y@(Compose (Identity (FT.Free (Branch c brs)))) = 
     (Compose <$> Identity <$> FT.Free <$> Branch c <$> sequence brs)
 

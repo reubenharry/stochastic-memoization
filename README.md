@@ -1,4 +1,3 @@
-UNDER CONSTRUCTION
 
 # Stochastic Memoization
 
@@ -245,23 +244,6 @@ fragmentCFG fragmentDict = Fold.futu (Compose . \case
 
   branch a bs = FT.Free $ Branch a (F.Pure <$> bs) 
 ```
-
-fragmentCFG :: FragmentDict -> Tree [] Word
-fragmentCFG fragmentDict = Fold.futu (Compose . \case
-
-  S  -> return $ branch (S, False) [NP, VP]
-  NP ->  return $ branch (NP, False) [DET, N]
-  DET -> return $ leaf (DET, False) "the"
-  N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
-  A  ->  [leaf (A, False) "green", leaf (A, False) "furious"]
-  VP ->  (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
-  V  -> return $ leaf (V, False) "sees")
-  
-  S
-
-  where 
-
-  branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
 
 You may be wondering how to actually get trees from it, and the answer is by using the following:
 
