@@ -11,13 +11,10 @@ import qualified Data.Map as M
 import           Data.Functor.Compose
 import qualified Data.Functor.Foldable as Fold
 
--- import           Control.Comonad.Cofree (Cofree())
-import qualified Control.Comonad.Trans.Cofree as FT
-
-
 import qualified Control.Monad.Free as F
 import qualified Control.Comonad.Cofree as F
 import qualified Control.Monad.Trans.Free as FT
+import qualified Control.Comonad.Trans.Cofree as FT
 
 import           Diagrams.Prelude               hiding (E, (:<), (^.), normalize, set) 
 
@@ -38,33 +35,45 @@ import Control.Arrow ((***), (&&&))
 
 type Word = String
 data CAT = S | NP | VP | A | N | DET | COP | V | PREP deriving (Show, Eq, Ord)
-
-type IsIdiom = String
+-- mark whether a node was compositionally generated, or generated via a fragment
 data NodeData = C CAT | I String
 
+-- the core tree datatype. Importantly, it's not a recursive type
 data NonRecursiveTree leafType branchType =
   Leaf leafType
   | Branch [branchType]
   deriving (Functor, Foldable, Traversable)
 
+-- some simple name synonyms to make types built with these types more self-explanatory to read
 type Deterministic = Identity -- a type synonym to indicate that the monad is just the identity
+type NoPausing = Void
+type PauseWithCat = CAT
+type AnnotateWith a f = FT.CofreeF f a
+type MakeRecursive m pauseType = FT.FreeT (AnnotateWith NodeData (NonRecursiveTree Word)) m pauseType
 
--- type Tree m leafType = FT.CofreeT (NonRecursiveTree leafType) m NodeData
--- type Fragment m leafType = FT.FreeT (NonRecursiveTree leafType) m CAT
+type Fragment m = MakeRecursive m PauseWithCat
+type Tree m = MakeRecursive m NoPausing
 
-type FragmentDict = CAT -> [[Fragment Deterministic Word]]
-
-
-type Tree m leafType = FT.FreeT (FT.CofreeF (NonRecursiveTree Word) NodeData) m Void
-type Fragment m leafType = FT.FreeT (FT.CofreeF (NonRecursiveTree Word) NodeData) m CAT
-
-cats :: [CAT]
-cats = [S, NP, VP, DET, A, N, COP, V]
-words :: [Word]
-words = ["the", "a", "turn", "blue", "circle", "square", "is"]
+type Idiom = [Fragment Deterministic]
+type FragmentDict = CAT -> [Idiom]
 
 
 
+type Grammar m pauseType = CAT -> Fold.Base (MakeRecursive m pauseType) CAT
+type FragmentGrammar m pauseType = 
+  CAT -> 
+    Fold.Base (MakeRecursive m pauseType) 
+    (F.Free (
+      Fold.Base (MakeRecursive m pauseType)) 
+      CAT)
+
+type Interpreter m resultType = Fold.Base (MakeRecursive m NoPausing) resultType -> resultType
+type FragmentInterpreter m pauseType = 
+    Fold.Base (MakeRecursive m pauseType) 
+    (F.Cofree (
+      Fold.Base (MakeRecursive m pauseType)) 
+      CAT) -> CAT
+                            
 -------
 -- TODO: trying stuff out
 -------
@@ -119,168 +128,106 @@ words = ["the", "a", "turn", "blue", "circle", "square", "is"]
 -- progressively more complex examples
 --------------------------------------
 
-deterministicSimpleTree :: Tree Deterministic Word
-deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
+example1 :: Grammar Deterministic NoPausing
+example2 :: Grammar Deterministic PauseWithCat
+example3 :: FragmentDict -> FragmentGrammar Deterministic NoPausing
+example4 :: FragmentDict -> FragmentGrammar Deterministic PauseWithCat
+example5 :: MonadSample m => Grammar m NoPausing
+example6 :: MonadSample m => Grammar m PauseWithCat
+example7 :: MonadSample m => FragmentDict -> FragmentGrammar m NoPausing
+example8 :: MonadSample m => FragmentDict -> FragmentGrammar m PauseWithCat
 
-  -- _ -> undefined
+branch x t = FT.Free (C x FT.:< Branch t)
+leaf x t = FT.Free (C x FT.:< Leaf t)
+pauseAt = FT.Pure
+
+loadFragments cat brs = FT.Free (C cat FT.:< 
+    Branch (F.hoistFree (Compose . Identity . FT.Free) . toFree <$> brs))
+
+example1 = Compose . Identity . \case
+
   S  -> branch S [NP, VP]
   NP -> branch NP [DET, N]
-  -- DET ->  leaf (N, "") "the"
-  -- N  -> leaf (N, "") "cat"
-  -- VP ->  branch (VP, "") [V, NP]
-  -- V  -> leaf (V, "") "sees"
-  )
+  DET -> leaf N "the"
+  N  -> leaf N "cat"
+  VP ->  branch VP [V, NP]
+  V  -> leaf V "sees"
 
-  S -- starting category
-
-  where
-
-  branch x t = FT.Free ((C x) FT.:< Branch t)
-  -- leaf tup t = tup FT.:< Leaf t
-
--- deterministicSimpleFragment :: Fragment Deterministic Word
--- deterministicSimpleFragment = Fold.unfold (Compose . Identity . \case
+example2 = Compose . Identity . \case
   
---   S  -> branch [NP, VP]
--- --   NP ->  branch [DET, N]
--- --   DET ->  leaf "the"
--- --   N  -> leaf "cat"
--- --   VP -> pauseAt VP
--- --   V  -> leaf "sees" 
---   )
-
---   S
-
---   where 
-
---   branch = FT.Free . Branch
--- --   leaf = FT.Free . Leaf
--- --   pauseAt = FT.Pure
-
--- deterministicComplexTree :: FragmentDict -> Tree Deterministic Word
--- deterministicComplexTree fragmentDict = Fold.futu (Compose . Identity . \case
+  S  -> branch S [NP, VP]
+  NP ->  branch NP [DET, N]
+  DET ->  leaf DET "the"
+  N  -> leaf N "cat"
+  VP -> pauseAt VP
+  V  -> leaf V "sees" 
   
---   S  -> branch S [NP, VP]
--- --   NP ->  branch (NP, "False") [DET, N]
--- --   DET -> leaf (DET, "False") "the"
--- --   N  -> leaf (N, "False") "cat"
--- --   VP -> (loadFragments VP $ head $ fragmentDict VP)
--- --   V  -> leaf (V, "False") "sees"
---   ) 
-
---   S
-
---   where 
-
---   branch x bs = FT.Free ((C x) FT.:< Branch (F.Pure <$> bs))
--- --   leaf tup t = tup FT.:< Leaf t
-
--- -- -- loadFragments :: [Fragment Deterministic Word] -> FT.CofreeF (NonRecursiveTree Word) NodeData
--- -- --   (F.Free
--- -- --   (Compose Identity (FT.CofreeF (NonRecursiveTree Word) NodeData))
--- -- --                                          CAT)
--- --   loadFragments cat brs = (cat, "idiom") FT.:< Branch (F.hoistFree t . toFree <$> brs) where
--- --     t x = Compose $ Identity $ (S,"idiom") FT.:< x
--- --     -- t (Branch [x]) = undefined
--- --     -- t (Branch []) = undefined
-
-
--- deterministicComplexFragment :: FragmentDict -> Fragment Deterministic Word
--- deterministicComplexFragment fragmentDict = Fold.futu (Compose . Identity . \case
+example3 fragmentDict = Compose . Identity . \case
   
---   S  -> branch [NP, VP]
--- --   DET -> leaf "the"
--- --   N  -> leaf  "cat"
--- --   NP ->  pauseAt NP
--- --   VP -> loadFragments $ head $ fragmentDict VP
--- -- --   VP ->  head (loadFragments . fragmentToBranch <$> (fragmentDict VP))
--- -- --   V  -> leaf (V, False) "sees"
---     )
+  S  -> branch S $ F.Pure <$> [NP, VP]
+  NP ->  branch NP $ F.Pure <$> [DET, N]
+  DET -> leaf DET "the"
+  N  -> leaf N "cat"
+  VP -> loadFragments VP $ head $ fragmentDict VP
+  V  -> leaf V "sees"
 
---   S
+example4 fragmentDict = Compose . Identity . \case
+  
+  S  -> branch S (F.Pure <$> [NP, VP])
+  DET -> leaf DET "the"
+  N  -> leaf N  "cat"
+  NP ->  pauseAt NP
+  VP -> loadFragments VP $ head $ fragmentDict VP
+  V  -> leaf V "sees"
 
---   where
+example5 = Compose . \case
 
---   branch bs =  FT.Free $ Branch (F.Pure <$> bs)
---   leaf = FT.Free . Leaf
---   pauseAt = FT.Pure
+  S  -> return $ branch S [NP, VP]
+  NP ->  return $ branch NP [DET, N]
+  DET -> return $ leaf DET "the"
+  N  -> uniformD [branch N [A, N], leaf N "idea"]
+  A  -> uniformD [leaf A "green", leaf A "furious"]
+  VP ->  return $ branch NP [V, NP]
+  V  -> return $ leaf V "sees"
 
---   loadFragments brs = FT.Free $ Branch $ (F.hoistFree ((Compose . Identity . FT.Free))) . toFree <$> brs 
-  -- brs :: [Fragment Deterministic Word]
-  --                                   -> FT.FreeF
-  --                                        (NonRecursiveTree [Char])
-  --                                        CAT
-  --                                        (F.Free
-  --                                           (Compose
-  --                                              Identity (FT.FreeF (NonRecursiveTree Word) CAT))
-  --                                           CAT) -- FT.Free . fmap (toFree . FT.transFreeT (Compose . return . FT.Free))
+example6 = Compose . \case
 
--- probabilisticSimpleTree :: MonadSample m => Tree m Word
--- probabilisticSimpleTree = Fold.unfold pcfg S
+  S  -> return $ branch S [NP, VP]
+  NP ->  return $ branch NP [DET, N]
+  DET -> return $ leaf DET "the"
+  N  -> uniformD [branch N [A, N], leaf N "idea"]
+  A  -> uniformD [leaf A "green", leaf A "furious"]
+  VP ->  uniformD [FT.Pure VP, branch NP [V, NP]]
+  V  -> return $ leaf V "sees"
 
--- pcfg = (Compose . \case
+example7 fragmentDict = Compose . \case
 
---   S  -> return $ branch (S, False) [NP, VP]
---   NP ->  return $ branch (NP, False) [DET, N]
---   DET -> return $ leaf (DET, False) "the"
---   N  -> uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
---   A  -> uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
---   VP ->  return $ branch (NP, False) [V, NP]
---   V  -> return $ leaf (V, False) "sees")
-
- 
--- probabilisticSimpleFragment :: MonadSample m => Fragment m Word
--- probabilisticSimpleFragment = Fold.unfold (Compose . \case
-
---   S  -> return $ branch (S, False) [NP, VP]
---   NP ->  return $ branch (NP, False) [DET, N]
---   DET -> return $ leaf (DET, False) "the"
---   N  -> uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
---   A  -> uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
---   VP ->  uniformD [FT.Pure VP, branch (NP, False) [V, NP]]
---   V  -> return $ leaf (V, False) "sees")
-
---   S
-
--- probabilisticComplexTree :: MonadSample m => FragmentDict -> Tree m Word
--- probabilisticComplexTree fragmentDict = Fold.futu (Compose . \case
-
---   S  -> return $ branch (S, False) [NP, VP]
+  S  -> return $ branch S (F.Pure <$> [NP, VP])
 --   NP ->  return $ branch (NP, False) [DET, N]
 --   DET -> return $ leaf (DET, False) "the"
 --   N  -> uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
 --   A  -> uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
 --   VP ->  uniformD (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
---   V  -> return $ leaf (V, False) "sees")
+--   V  -> return $ leaf (V, False) "sees"
 
---   S
+example8 fragmentDict = Compose . \case
 
---   where 
-
---   branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
-
--- probabilisticComplexFragment :: MonadSample m => FragmentDict -> Fragment m Word
--- probabilisticComplexFragment fragmentDict = Fold.futu (Compose . go) S where
-
-
---   go S = return $ branch (S, False) [NP, VP]
---   go NP = return $ FT.Pure NP
---   go DET = return $ leaf (DET, False) "the"
---   go N = uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
---   go A = uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
---   go V = return $ leaf (V, False) "sees"
---   go VP = uniformD (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
-
-
---   branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
---   leaf a = FT.Free . Leaf a
-
+  S -> return $ branch S (F.Pure <$> [NP, VP])
+  -- NP = return $ FT.Pure NP
+  -- DET = return $ leaf (DET, False) "the"
+  -- N = uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
+  -- A = uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
+  -- V = return $ leaf (V, False) "sees"
+  -- VP = uniformD (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
 
 
 -- fragmentCFG :: FragmentDict -> Tree [] Word
--- fragmentCFG fragmentDict = Fold.futu (Compose . \case
+-- fragmentCFG fragmentDict = Fold.futu (
 
---   S  -> return $ branch (S, False) [NP, VP]
+cfg :: FragmentDict -> FragmentGrammar [] NoPausing
+cfg fragmentDict = Compose . \case
+
+  S  -> return $ branch S $ F.Pure <$> [NP, VP]
 --   NP ->  return $ branch (NP, False) [DET, N]
 --   DET -> return $ leaf (DET, False) "the"
 --   N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
@@ -296,23 +243,23 @@ deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
 
 
 
--- grammar :: FragmentDict
--- grammar = \case
+grammar :: FragmentDict
+grammar = \case
   
---   S -> [[branch [pauseAt NP, pauseAt VP] ]]
+  S -> [[branch "red" [pauseAt NP, pauseAt VP] ]]
 --   NP -> [[branch [pauseAt DET, pauseAt N] ]]
 --   VP -> [[branch [leaf "gives", pauseAt NP], branch [leaf "a", leaf "break" ]]]
 --   N -> [[leaf "dog", branch  [pauseAt A, pauseAt N]]]
---   V -> [[leaf "sees"]]
+  V -> [[leaf "blue" "sees"]]
 --   DET -> [[leaf "the"]]
 
 --   _ -> [[leaf "no entry: error (grammar)"]]
 
---   where 
+  where 
 
---   branch bs = FT.free $ FT.Free $ Branch bs
---   leaf = FT.free . FT.Free . Leaf
---   pauseAt = FT.free . FT.Pure
+  branch c bs = FT.free $ FT.Free $ I c FT.:< Branch bs
+  leaf c bs = FT.free $ FT.Free $ I c FT.:< Leaf bs
+  pauseAt = FT.free . FT.Pure
 
 
 
@@ -333,27 +280,21 @@ deterministicSimpleTree = Fold.unfold (Compose . Identity . \case
 saveDiagram :: String -> Diagram B -> IO ()
 saveDiagram path diagram = let size = mkSizeSpec $ r2 (Just 1000, Just 1000) in renderSVG path size (diagram # bg white)
 
-
-
-
--- fragmentToBranch :: Fragment Deterministic Word -> NonRecursiveTree Word (Fragment Deterministic Word)
--- fragmentToBranch (FT.FreeT (Identity (FT.Pure x))) = Branch (S, True) [FT.free $ FT.Pure x]
--- fragmentToBranch (FT.FreeT (Identity (FT.Free (Branch c brs)))) = Branch c brs
--- fragmentToBranch (FT.FreeT (Identity (FT.Free (Leaf c x)))) = Leaf c x
-
-
--- loadFragments = FT.Free . fmap (toFree . FT.transFreeT (Compose . return . FT.Free)) where
--- -- converts between Free from Control.Monad.Trans.Free and Control.Monad.Free
 toFree :: Functor f => FT.Free f a1 -> F.Free f a1
 toFree = Fold.cata $ \case
   Compose (Identity (FT.Free x)) -> F.Free x
   Compose (Identity (FT.Pure x)) -> F.Pure x
 
 -- freeTreeAlgebra :: Show a => Compose Identity (FT.FreeF (NonRecursiveTree [Char]) a) [Char] -> [Char]
--- freeTreeAlgebra (Compose (Identity (FT.Free (Branch c brs)))) = join $ intersperse " " brs
+linearize :: Interpreter Deterministic String
+linearize (Compose (Identity (FT.Free (_ FT.:< Branch brs)))) = join $ intersperse " " brs
 -- freeTreeAlgebra (Compose (Identity (FT.Free (Leaf c a)))) = a 
 -- freeTreeAlgebra (Compose (Identity (FT.Pure a))) = show a
 
+
+connection :: Monad m => Grammar m NoPausing -> Interpreter m a -> CAT -> a
+-- Grammar m a -> Interpreter m String -> m String
+connection = flip Fold.hylo
 
 -- -- Surely a one-liner that I'm missing
 -- numberLeaves :: Show a => FT.Free (NonRecursiveTree Word) a -> FT.Free (NonRecursiveTree Word) a
@@ -373,22 +314,21 @@ toFree = Fold.cata $ \case
 showCat (C x) = show x
 showCat (I x) = "Idiom"
 
-toDiagram :: Tree Identity Word -> Diagram B
-toDiagram = fst . Fold.cata alg where
+toDiagram :: Monad m => Tree m -> m (Diagram B)
+toDiagram = fmap fst . Fold.cata alg where
 
-  -- alg = undefined
-  
-  alg (Compose (Identity (FT.Pure x))) = (text (show x) # fc blue <> rect (maximum [fromIntegral (length (show x)), 3]) 2 # lw 0,
-      show x)
 
-  alg (Compose (Identity (FT.Free (c FT.:< (Leaf x))))) =
-    (vsep 0.5 [
-      text (show $ showCat c) # fc (col id c) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0,
-      vrule 0.5,
-      text (init x) # (col fc c) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0],
-    show $ last x)
-  alg (Compose (Identity (FT.Free (c FT.:< Branch brs)))) = combineDiagrams (col id c) c (brs)
+  alg (Compose y) = do
+    y' <- y
+    case y' of 
+      FT.Free (c FT.:< (Leaf x))
+        -> return (vsep 0.5 [
+          text (showCat c) # fc (col id c) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0,
+          vrule 0.5,
+          text (init x) # col fc c <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0],
+          show $ last x)
 
+      FT.Free (c FT.:< Branch brs) -> combineDiagrams (col id c) c <$> sequence brs
 
   col f c = case c of
    (I _) -> f red
@@ -406,8 +346,8 @@ toDiagram = fst . Fold.cata alg where
         -- # if length ds > 1 then (connectOutside' arrowStyle newName (snd $ ds !! 1)) else id
       , newName )
     where
-      arrowStyle = (with & arrowHead .~ dart & headLength .~ 3 
-        & tailLength .~ verySmall)
+      arrowStyle = with & arrowHead .~ dart & headLength .~ 3 
+        & tailLength .~ verySmall
       colorIdiom f color d = if f then d # lc color else d
 
 
@@ -466,7 +406,10 @@ depth = 10
 
 makeTrees = do
 
-  saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ deterministicSimpleTree
+  saveDiagram "img/deterministicSimpleTree.svg" $ runIdentity (toDiagram $ Fold.ana example1 S)
+  -- saveDiagram "img/probabilisticSimpleTree.svg" =<< 
+  saveDiagram "img/probabilisticSimpleTree.svg" =<< sampleIO (toDiagram $ Fold.ana example5 S)
+
   -- saveDiagram "img/deterministicSimpleFragment.svg" $ toDiagram $ deterministicSimpleFragment
   -- saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ deterministicSimpleTree
   -- saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ deterministicSimpleTree
@@ -499,4 +442,10 @@ makeTrees = do
 --     return (Compose $ Identity $ FT.Free (Leaf c x))
 -- may y@(Compose (Identity (FT.Free (Branch c brs)))) = 
 --     (Compose <$> Identity <$> FT.Free <$> Branch c <$> sequence brs)
+
+
+cats :: [CAT]
+cats = [S, NP, VP, DET, A, N, COP, V]
+words :: [Word]
+words = ["the", "a", "turn", "blue", "circle", "square", "is"]
 
