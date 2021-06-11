@@ -16,7 +16,7 @@ import qualified Control.Comonad.Cofree as F
 import qualified Control.Monad.Trans.Free as FT
 import qualified Control.Comonad.Trans.Cofree as FT
 
-import           Diagrams.Prelude               hiding (E, (:<), (^.), normalize, set) 
+import           Diagrams.Prelude               hiding (Cat, E, (:<), (^.), normalize, set) 
 
 
 import           Diagrams.Backend.SVG.CmdLine    (B)
@@ -32,6 +32,12 @@ import           Data.Fix
 import           Data.Void (Void)
 
 import Control.Arrow ((***), (&&&))
+
+import Numeric.Log
+
+import Control.Comonad
+
+
 
 type Word = String
 data CAT = S | NP | VP | A | N | DET | COP | V | PREP deriving (Show, Eq, Ord)
@@ -49,30 +55,30 @@ type Deterministic = Identity -- a type synonym to indicate that the monad is ju
 type NoPausing = Void
 type PauseWithCat = CAT
 type AnnotateWith a f = FT.CofreeF f a
-type MakeRecursive m pauseType = FT.FreeT (AnnotateWith NodeData (NonRecursiveTree Word)) m pauseType
+type RecursiveTree m pauseType = FT.FreeT (AnnotateWith NodeData (NonRecursiveTree Word)) m pauseType
 
-type Fragment m = MakeRecursive m PauseWithCat
-type Tree m = MakeRecursive m NoPausing
+type Fragment m = RecursiveTree m PauseWithCat
+type Tree m = RecursiveTree m NoPausing
 
 type Idiom = [Fragment Deterministic]
 type FragmentDict = CAT -> [Idiom]
 
 
 
-type Grammar m pauseType = CAT -> Fold.Base (MakeRecursive m pauseType) CAT
-type FragmentGrammar m pauseType = 
-  CAT -> 
-    Fold.Base (MakeRecursive m pauseType) 
+type Grammar m pauseType startType = startType -> Fold.Base (RecursiveTree m pauseType) startType
+type FragmentGrammar m pauseType startType = 
+  startType -> 
+    Fold.Base (RecursiveTree m pauseType) 
     (F.Free (
-      Fold.Base (MakeRecursive m pauseType)) 
-      CAT)
+      Fold.Base (RecursiveTree m pauseType)) 
+      startType)
 
-type Interpreter m resultType = Fold.Base (MakeRecursive m NoPausing) resultType -> resultType
-type FragmentInterpreter m pauseType = 
-    Fold.Base (MakeRecursive m pauseType) 
+type Interpreter m pauseType resultType = Fold.Base (RecursiveTree m pauseType) (m resultType) -> m resultType
+type FragmentInterpreter m pauseType resultType = 
+    Fold.Base (RecursiveTree m pauseType) 
     (F.Cofree (
-      Fold.Base (MakeRecursive m pauseType)) 
-      CAT) -> CAT
+      Fold.Base (RecursiveTree m pauseType)) 
+      (m resultType)) -> m resultType
                             
 -------
 -- TODO: trying stuff out
@@ -124,27 +130,37 @@ type FragmentInterpreter m pauseType =
 
 --   S -- starting category
 
---------------------------------------
--- progressively more complex examples
---------------------------------------
 
-example1 :: Grammar Deterministic NoPausing
-example2 :: Grammar Deterministic PauseWithCat
-example3 :: FragmentDict -> FragmentGrammar Deterministic NoPausing
-example4 :: FragmentDict -> FragmentGrammar Deterministic PauseWithCat
-example5 :: MonadSample m => Grammar m NoPausing
-example6 :: MonadSample m => Grammar m PauseWithCat
-example7 :: MonadSample m => FragmentDict -> FragmentGrammar m NoPausing
-example8 :: MonadSample m => FragmentDict -> FragmentGrammar m PauseWithCat
 
+
+----------
+-- helper functions
+----------
+
+branch :: CAT -> [b0] -> FT.FreeF (FT.CofreeF (NonRecursiveTree leafType0) NodeData) a0 b0
 branch x t = FT.Free (C x FT.:< Branch t)
 leaf x t = FT.Free (C x FT.:< Leaf t)
 pauseAt = FT.Pure
 
 loadFragments cat brs = FT.Free (C cat FT.:< 
-    Branch (F.hoistFree (Compose . Identity . FT.Free) . toFree <$> brs))
+    Branch (F.hoistFree (Compose . return . FT.Free) . toFree <$> brs))
 
-example1 = Compose . Identity . \case
+
+--------------------------------------
+-- progressively more complex syntaxs
+--------------------------------------
+
+syntax1 :: Grammar Deterministic NoPausing CAT
+syntax2 :: Grammar Deterministic PauseWithCat CAT
+syntax3 :: FragmentDict -> FragmentGrammar Deterministic NoPausing CAT
+syntax4 :: FragmentDict -> FragmentGrammar Deterministic PauseWithCat CAT
+syntax5 :: MonadSample m => Grammar m NoPausing CAT
+syntax6 :: MonadSample m => Grammar m PauseWithCat CAT
+syntax7 :: MonadSample m => FragmentDict -> FragmentGrammar m NoPausing CAT
+syntax8 :: MonadSample m => FragmentDict -> FragmentGrammar m PauseWithCat CAT
+cfg :: FragmentDict -> FragmentGrammar [] NoPausing CAT
+
+syntax1 = Compose . Identity . \case
 
   S  -> branch S [NP, VP]
   NP -> branch NP [DET, N]
@@ -153,7 +169,7 @@ example1 = Compose . Identity . \case
   VP ->  branch VP [V, NP]
   V  -> leaf V "sees"
 
-example2 = Compose . Identity . \case
+syntax2 = Compose . Identity . \case
   
   S  -> branch S [NP, VP]
   NP ->  branch NP [DET, N]
@@ -162,7 +178,7 @@ example2 = Compose . Identity . \case
   VP -> pauseAt VP
   V  -> leaf V "sees" 
   
-example3 fragmentDict = Compose . Identity . \case
+syntax3 fragmentDict = Compose . Identity . \case
   
   S  -> branch S $ F.Pure <$> [NP, VP]
   NP ->  branch NP $ F.Pure <$> [DET, N]
@@ -171,7 +187,7 @@ example3 fragmentDict = Compose . Identity . \case
   VP -> loadFragments VP $ head $ fragmentDict VP
   V  -> leaf V "sees"
 
-example4 fragmentDict = Compose . Identity . \case
+syntax4 fragmentDict = Compose . Identity . \case
   
   S  -> branch S (F.Pure <$> [NP, VP])
   DET -> leaf DET "the"
@@ -180,17 +196,17 @@ example4 fragmentDict = Compose . Identity . \case
   VP -> loadFragments VP $ head $ fragmentDict VP
   V  -> leaf V "sees"
 
-example5 = Compose . \case
+syntax5 = Compose . \case
 
   S  -> return $ branch S [NP, VP]
   NP ->  return $ branch NP [DET, N]
   DET -> return $ leaf DET "the"
-  N  -> uniformD [branch N [A, N], leaf N "idea"]
+  N  -> uniformD [leaf N "idea", leaf N "cat"] -- [branch N [A, N], leaf N "idea"]
   A  -> uniformD [leaf A "green", leaf A "furious"]
   VP ->  return $ branch NP [V, NP]
-  V  -> return $ leaf V "sees"
+  V  -> uniformD [leaf V "sees", leaf V "knows"]
 
-example6 = Compose . \case
+syntax6 = Compose . \case
 
   S  -> return $ branch S [NP, VP]
   NP ->  return $ branch NP [DET, N]
@@ -200,60 +216,59 @@ example6 = Compose . \case
   VP ->  uniformD [FT.Pure VP, branch NP [V, NP]]
   V  -> return $ leaf V "sees"
 
-example7 fragmentDict = Compose . \case
+-- syntax7 fragmentDict = Compose . \case
 
-  S  -> return $ branch S (F.Pure <$> [NP, VP])
---   NP ->  return $ branch (NP, False) [DET, N]
---   DET -> return $ leaf (DET, False) "the"
---   N  -> uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
---   A  -> uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
---   VP ->  uniformD (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
---   V  -> return $ leaf (V, False) "sees"
+--   S  -> return $ branch S (F.Pure <$> [NP, VP])
+--   NP ->  return $ branch NP $ F.Pure <$> [DET, N]
+--   DET -> return $ leaf DET "the"
+--   N  -> uniformD [branch N $ F.Pure <$> [A, N], leaf N "idea"]
+--   A  -> uniformD [leaf A "green", leaf A "furious"]
+--   VP ->  uniformD (loadFragments VP <$> fragmentDict VP) 
+--   V  -> return $ leaf V "sees"
 
-example8 fragmentDict = Compose . \case
+syntax7 fragmentDict = Compose . \x
 
-  S -> return $ branch S (F.Pure <$> [NP, VP])
-  -- NP = return $ FT.Pure NP
-  -- DET = return $ leaf (DET, False) "the"
-  -- N = uniformD [branch (N, False) [A, N], leaf (N, False) "idea"]
-  -- A = uniformD [leaf (A, False) "green", leaf (A, False) "furious"]
-  -- V = return $ leaf (V, False) "sees"
-  -- VP = uniformD (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
+  ->  uniformD (loadFragments x <$> fragmentDict x) 
 
 
--- fragmentCFG :: FragmentDict -> Tree [] Word
--- fragmentCFG fragmentDict = Fold.futu (
+syntax8 fragmentDict = Compose . \x
 
-cfg :: FragmentDict -> FragmentGrammar [] NoPausing
+  ->  uniformD (loadFragments x <$> fragmentDict x)
+
+  -- Compose . \case
+
+  -- S -> return $ branch S (F.Pure <$> [NP, VP])
+  -- NP -> return $ FT.Pure NP
+  -- DET -> return $ leaf DET "the"
+  -- N -> uniformD [branch N $ F.Pure <$> [A, N], leaf N "idea"]
+  -- A -> uniformD [leaf A "green", leaf A "furious"]
+  -- V -> return $ leaf V "sees"
+  -- VP -> uniformD (loadFragments VP <$> fragmentDict VP) 
+
+
 cfg fragmentDict = Compose . \case
 
-  S  -> return $ branch S $ F.Pure <$> [NP, VP]
---   NP ->  return $ branch (NP, False) [DET, N]
---   DET -> return $ leaf (DET, False) "the"
---   N  ->  [branch (N, False) [A, N], leaf (N, False) "idea"]
---   A  ->  [leaf (A, False) "green", leaf (A, False) "furious"]
---   VP ->  (loadFragments . fragmentToBranch <$> (fragmentDict VP)) 
---   V  -> return $ leaf (V, False) "sees")
+  S  ->  return $ branch S $ F.Pure <$> [NP, VP]
+  NP ->  return $ branch NP $ F.Pure <$> [DET, N]
+  DET -> return $ leaf DET "the"
+  N  ->  [branch N $ F.Pure <$> [A, N], leaf N "idea"]
+  A  ->  [leaf A "green", leaf A "furious"]
+  VP ->  loadFragments VP <$> fragmentDict VP
+  V  ->  return $ leaf V "sees"
+
+
+fragmentDict :: FragmentDict
+fragmentDict = \case
   
---   S
+  S -> [[branch "red" [pauseAt NP, pauseAt VP]], [branch "red" [pauseAt S, branch "red" [leaf "purple" "and", pauseAt S]] ]]
+  NP -> [[branch "green" [pauseAt DET, pauseAt N] ]]
+  VP -> [[branch "purple" [leaf "purple" "gives", pauseAt NP], branch "purple" [leaf "purple" "a", leaf "purple" "break" ]]]
+  N -> [[leaf "orange" "dog"], [branch "orange" [pauseAt A, pauseAt N]]]
+  V -> [[leaf "cyan" "sees"]]
+  DET -> [[leaf "grey" "the"]]
+  A -> [[leaf "yellow" "small"]]
 
---   where 
-
---   branch a bs = FT.Free $ Branch a (F.Pure <$> bs)
-
-
-
-grammar :: FragmentDict
-grammar = \case
-  
-  S -> [[branch "red" [pauseAt NP, pauseAt VP] ]]
---   NP -> [[branch [pauseAt DET, pauseAt N] ]]
---   VP -> [[branch [leaf "gives", pauseAt NP], branch [leaf "a", leaf "break" ]]]
---   N -> [[leaf "dog", branch  [pauseAt A, pauseAt N]]]
-  V -> [[leaf "blue" "sees"]]
---   DET -> [[leaf "the"]]
-
---   _ -> [[leaf "no entry: error (grammar)"]]
+  _ -> [[leaf "black" "no entry: error (fragmentDict)"]]
 
   where 
 
@@ -263,17 +278,17 @@ grammar = \case
 
 
 
--- step :: MonadSample m => CAT -> FragmentDict -> m FragmentDict
--- step cat fragDict = do 
---  frag <- FT.joinFreeT $ fragmentGrammar fragDict
---  addNew <- bernoulli 0.5
---  let newFragDict y = if y == cat then fragDict y <> [frag] else fragDict y
---  return (if addNew then newFragDict else fragDict)
+step :: MonadSample m => CAT -> FragmentDict -> m FragmentDict
+step cat fragDict = do 
+ frag <- FT.joinFreeT $ Fold.futu (syntax8 fragDict) S
+ addNew <- bernoulli 0.5
+ let newFragDict y = if y == cat then fragDict y <> [[frag]] else fragDict y
+ return (if addNew then newFragDict else fragDict)
 
--- iterateMInt :: Monad m => (a -> m a) -> a -> Int -> m a
--- iterateMInt step init int = if int == 0 then step init else do
---   result <- step init
---   iterateMInt step result (int -1)
+iterateMInt :: Monad m => (a -> m a) -> a -> Int -> m a
+iterateMInt step init int = if int == 0 then step init else do
+  result <- step init
+  iterateMInt step result (int -1)
 
 
 
@@ -285,65 +300,124 @@ toFree = Fold.cata $ \case
   Compose (Identity (FT.Free x)) -> F.Free x
   Compose (Identity (FT.Pure x)) -> F.Pure x
 
--- freeTreeAlgebra :: Show a => Compose Identity (FT.FreeF (NonRecursiveTree [Char]) a) [Char] -> [Char]
-linearize :: Interpreter Deterministic String
-linearize (Compose (Identity (FT.Free (_ FT.:< Branch brs)))) = join $ intersperse " " brs
--- freeTreeAlgebra (Compose (Identity (FT.Free (Leaf c a)))) = a 
--- freeTreeAlgebra (Compose (Identity (FT.Pure a))) = show a
+phonology2 :: (Monad m, Show pauseType) => Interpreter m pauseType String
+phonology2 (Compose x) = do 
+  x' <- x 
+  case x' of 
+    (FT.Free (_ FT.:< Branch brs)) -> join . intersperse " " <$> sequence brs
+    (FT.Free (_ FT.:< Leaf a)) -> return a
+    (FT.Pure a) -> return $ show a
+
+semantics1 :: (Monad m, Show pauseType) => Interpreter m pauseType Bool
+semantics1 (Compose x) = do 
+  x' <- x 
+  case x' of 
+    (FT.Free (_ FT.:< Branch brs)) -> all (==True) <$> sequence brs
+    -- error . show <$> sequence brs -- 
+    (FT.Free (_ FT.:< Leaf a)) -> return True
+    (FT.Pure a) -> return True
 
 
-connection :: Monad m => Grammar m NoPausing -> Interpreter m a -> CAT -> a
--- Grammar m a -> Interpreter m String -> m String
-connection = flip Fold.hylo
+semanticsAndPhonology1 :: (MonadSample m, Show pauseType) => FragmentInterpreter m pauseType (String, World -> Bool)
+-- semanticsAndPhonology1 :: (Monad m, Show pauseType) => Interpreter m pauseType (String, World -> Bool)
+semanticsAndPhonology1 (Compose x) =  do 
+  x' <- x 
+  case x' of 
+    (FT.Free (_ FT.:< Branch brs)) -> (foldr1 (\(str1, bool1) (str2, bool2) -> (str1<>" "<>str2, liftA2 (&&) bool1 bool2) )) <$> sequence (extract <$> brs)
+    -- error . show <$> sequence brs -- 
+    (FT.Free (_ FT.:< Leaf "cat")) -> return ("cat", (==Cat))
+    -- (FT.Free (_ FT.:< Leaf "idea")) -> return ("idea", (==Idea))
+    (FT.Free (_ FT.:< Leaf a)) -> return (a, const True)
+    (FT.Pure a) -> return (show a, const True)
 
--- -- Surely a one-liner that I'm missing
--- numberLeaves :: Show a => FT.Free (NonRecursiveTree Word) a -> FT.Free (NonRecursiveTree Word) a
--- numberLeaves = undefined
-  -- fst . flip runState 0 . Fold.transverse go where
 
---   go y@(Compose (Identity (FT.Free (Leaf c x)))) = do
---     i <- get
---     modify (+1)
---     return (Compose $ Identity $ FT.Free (Leaf c (x<>show i)))
+type Convention m pauseType resultType startType = (Interpreter m pauseType resultType, Grammar m pauseType startType)
 
---   go y@(Compose (Identity (FT.Free (Branch c brs)))) = 
---     (Compose <$> Identity <$> FT.Free <$> Branch c <$> sequence brs) 
+speaker :: Monad m => (Interpreter m pauseType a, Grammar m pauseType b) -> b -> m a
+speaker = uncurry Fold.hylo
 
---   go (Compose (Identity (FT.Pure x))) = return (Compose $ Identity $ FT.Pure x)
+s w = do
+  (phonology, denotation) <- Fold.chrono semanticsAndPhonology1 (syntax8 fragmentDict) S
+  condition (denotation w)
+  return phonology
 
+data World = Cat | Idea deriving (Eq, Ord, Show)
+
+l u = do
+  w <- uniformD [Cat, Idea]
+  factor (Exp $ log $ mass (s w) u)
+  return w
+
+s1 w = do
+  (phonology, denotation) <- Fold.chrono semanticsAndPhonology1 (syntax8 fragmentDict) S
+  factor (Exp $ log $ mass (l phonology) w)
+  return phonology
+  
+
+-- convention = (semanticsAndPhonology1, syntax5)
+
+-- foo :: MonadSample m => Speaker m
+-- foo = speaker (semanticsAndPhonology1, syntax5)
+
+runProb = enumerate $ s1 Idea -- l "the idea knows the idea"
+
+-- bar :: Monad m => Interpreter m () (String, String)
+-- bar = foo `algebraProduct` foo
+-- foo = speaker (phonology1 `algebraProduct` phonology1, undefined)
+
+algebraProduct :: Applicative m => Interpreter m pauseType a -> Interpreter m pauseType b -> Interpreter m pauseType (a, b)
+algebraProduct f1 f2 fab = liftA2 (,) (f1 $ fmap fst <$> fab) (f2 $ fmap snd <$> fab) --  (f1 $ fst <$> fab) (f2 $ snd <$> fab)
+
+showCat :: NodeData -> String
 showCat (C x) = show x
 showCat (I x) = "Idiom"
 
-toDiagram :: Monad m => Tree m -> m (Diagram B)
-toDiagram = fmap fst . Fold.cata alg where
-
-
-  alg (Compose y) = do
-    y' <- y
-    case y' of 
-      FT.Free (c FT.:< (Leaf x))
-        -> return (vsep 0.5 [
+-- phonology1 :: (Monad m, Show pauseType) => Interpreter m pauseType (Diagram B, String)
+phonology1 :: (MonadSample m, Show pauseType) => FragmentInterpreter m pauseType (Diagram B, String)
+phonology1 (Compose y) = do
+  y' <- y
+  case y' of 
+    FT.Free (c FT.:< (Leaf x))
+      -> do 
+        n <- random
+        return (vsep 0.5 [
           text (showCat c) # fc (col id c) <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0,
           vrule 0.5,
-          text (init x) # col fc c <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0],
-          show $ last x)
+          text x # col fc c <> rect (maximum [fromIntegral $ length x, 3]) 2 # lw 0],
+          show ( x) <> show n  )
 
-      FT.Free (c FT.:< Branch brs) -> combineDiagrams (col id c) c <$> sequence brs
+    FT.Free (c FT.:< Branch brs) -> combineDiagrams (col id c) c =<< sequence (fmap extract brs)
+
+    FT.Pure x -> return (text (show x) # fc blue
+      <> rect (maximum [fromIntegral (length (show x)), 3]) 2 # lw 0,
+      show x)
+
+  where
 
   col f c = case c of
-   (I _) -> f red
+   (I "red") -> f red
+   (I "blue") -> f blue
+   (I "grey") -> f grey
+   (I "cyan") -> f cyan
+   (I "orange") -> f orange
+   (I "green") -> f green
+   (I "purple") -> f purple
+   (I "black") -> f black
+   I "yellow" -> f yellow
+
    (C _) -> f black
 
-  combineDiagrams textColor c ds = 
-    let newName = join $ intersperse "|" $ fmap snd ds
-    in (vsep 0.5 [
+  combineDiagrams textColor c ds = do
+    newName <- show <$> random   -- = join $ intersperse "|" $ fmap snd ds
+    return (vsep 0.5 [
       text (showCat c) # fc textColor <> rect 2 2 # centerX # lw 0 # named newName,
 
       hsep 0.5 [d # named name | (d, name) <- ds]
          # centerX
       ]
-        -- # connectOutside' arrowStyle newName (snd $ ds !! 0) 
-        -- # if length ds > 1 then (connectOutside' arrowStyle newName (snd $ ds !! 1)) else id
+        -- # error (show ((snd $ ds !! 0)==newName)) -- 
+        # connectOutside' arrowStyle newName (snd $ ds !! 0) 
+        # if length ds > 1 then (connectOutside' arrowStyle newName (snd $ ds !! 1)) else id
       , newName )
     where
       arrowStyle = with & arrowHead .~ dart & headLength .~ 3 
@@ -385,20 +459,27 @@ toDiagram = fmap fst . Fold.cata alg where
 --     bR <- makeBranchCompositional
 --     return (FT.Free $ Branch (cat, False) [bL, bR] )
 
--- runFragmentGrammar :: IO ()
--- runFragmentGrammar = do 
+runFragmentGrammar :: IO ()
+runFragmentGrammar = do 
 
---   (mcmcSamplesOfFragmentTrees, weight) <- sampleIO (runWeighted $ mh 10 $ do 
---     frags <- (=<< cats) <$> iterateMInt (step S) (const []) 5
---     let sents = Fold.cata freeTreeAlgebra <$> frags
---     condition ("the circle" `elem` sents)
---     return frags
---     )
+  (mcmcSamplesOfFragmentTrees, weight) <- sampleIO (runWeighted $ mh 10 $ do 
+    frags <- iterateMInt (step S) (fragmentDict) 10
+    Fold.chrono phonology1 (syntax8 frags) S
+    -- let sents = Fold.cata phonology2 <$> frags
+    -- condition ("the circle" `elem` sents)
+    -- return frags
+    )
+  -- let a = (last $ last mcmcSamplesOfFragmentTrees)
+  -- let diagram = hsep 0.5 $ intersperse (vrule 10 # centerY) $ (Fold.histo phonology1 <$> last mcmcSamplesOfFragmentTrees)
+  let d = fst $ last $ mcmcSamplesOfFragmentTrees
+  -- print (Fold.cata phonology2 <$> last mcmcSamplesOfFragmentTrees)
+  -- print weight
+  saveDiagram "img/fragment4.svg" d
 
---   let diagram = hsep 0.5 $ intersperse (vrule 10 # centerY) $ (toDiagram . numberLeaves <$> last mcmcSamplesOfFragmentTrees)
---   print (Fold.cata freeTreeAlgebra <$> last mcmcSamplesOfFragmentTrees)
---   print weight
---   saveDiagram "img/fragment.svg" diagram
+
+-- f (m a) -> m a
+-- f (m b) -> m b
+
 
 
 depth :: Integer
@@ -406,10 +487,14 @@ depth = 10
 
 makeTrees = do
 
-  saveDiagram "img/deterministicSimpleTree.svg" $ runIdentity (toDiagram $ Fold.ana example1 S)
+  -- saveDiagram "img/deterministicSimpleTree.svg" $ runIdentity $ fmap fst 
+  --   (speaker (phonology1, syntax1) S)
+  -- saveDiagram "img/deterministicSimpleFragment.svg" $ runIdentity (toDiagram $ Fold.ana syntax2 S)
   -- saveDiagram "img/probabilisticSimpleTree.svg" =<< 
-  saveDiagram "img/probabilisticSimpleTree.svg" =<< sampleIO (toDiagram $ Fold.ana example5 S)
+  -- saveDiagram "img/probabilisticSimpleTree.svg" =<< sampleIO (toDiagram $ Fold.ana syntax5 S)
 
+  saveDiagram "img/probabilisticComplexFragment.svg" =<< (sampleIO . fmap fst)
+    (Fold.chrono phonology1 (syntax7 fragmentDict) S)
   -- saveDiagram "img/deterministicSimpleFragment.svg" $ toDiagram $ deterministicSimpleFragment
   -- saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ deterministicSimpleTree
   -- saveDiagram "img/deterministicSimpleTree.svg" $ toDiagram $ deterministicSimpleTree

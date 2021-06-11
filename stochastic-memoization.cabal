@@ -32,12 +32,14 @@ library
       src
   build-depends:
       base >=4.7 && <5
+    , comonad
     , containers
     , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
     , free
+    , log-domain
     , monad-bayes
     , mtl
     , recursion-schemes
@@ -52,12 +54,14 @@ executable stochastic-memoization-exe
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , comonad
     , containers
     , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
     , free
+    , log-domain
     , monad-bayes
     , mtl
     , recursion-schemes
@@ -74,12 +78,14 @@ test-suite stochastic-memoization-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , comonad
     , containers
     , data-fix
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
     , free
+    , log-domain
     , monad-bayes
     , mtl
     , recursion-schemes

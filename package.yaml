@@ -30,6 +30,8 @@ dependencies:
 - diagrams-svg
 - containers
 - data-fix
+- comonad
+- log-domain
 
 library:
   source-dirs: src
